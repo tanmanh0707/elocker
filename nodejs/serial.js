@@ -122,6 +122,7 @@ async function main() {
 
   let recvBuffer = Buffer.alloc(0);
   let pendingResolver = null;
+  let timeoutHandle = null;
 
   const port = new SerialPort({ path: serialPath, baudRate: baud, autoOpen: false });
 
@@ -140,6 +141,10 @@ async function main() {
 
       if (validatePacket(packet)) {
 		if (pendingResolver) {
+		  if (timeoutHandle) {
+			clearTimeout(timeoutHandle);
+			timeoutHandle = null;
+		  }
           pendingResolver(packet);
           pendingResolver = null;
 	    } else {
@@ -166,7 +171,8 @@ async function main() {
           resolve(null);
         }
       });
-      setTimeout(() => {
+      timeoutHandle = setTimeout(() => {
+		console.log("Timeout");
         if (pendingResolver) {
           pendingResolver = null;
           resolve(null);
@@ -185,14 +191,30 @@ async function main() {
     if (req.method === "POST" && req.url === "/getStatus") {
       let results = [];
       for (let id = 1; id <= 5; id++) {
-        const pkt = buildPacket(id, 0x1);
+        const pkt = buildPacket(id, CMD_GET_CURRENT_mA);
+		console.log("Sending:", id);
         const resp = await sendAndWait(pkt, 100);
+		
         if (resp) {
-          results.push({ id, status: "ok", raw: resp.toString("hex") });
+			console.log("resp:", resp);
+			const dataBytes = resp.slice(3, 7);
+			const value = dataBytes.readFloatLE(0);
+			console.log("(", id, ")", "Float value:", value.toFixed(2), "(mA)");
+			let statusStr = "";
+			if (value < 10) {
+				statusStr = "notcharge";
+			}else if (value < 300) {
+				statusStr = "fullcharged";
+			} else {
+				statusStr = "charging";
+			}
+            results.push({ id, status: statusStr });
         } else {
+		  console.log("(", id, ")", "Timeout!");
           results.push({ id, status: "timeout" });
         }
       }
+	  console.log(results);
       const json = JSON.stringify({ results }, null, 2);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(json);
