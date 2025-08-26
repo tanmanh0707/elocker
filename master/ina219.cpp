@@ -51,11 +51,15 @@ void sensor_task(void *arg)
     }
 
 #if defined(DEVICE_TYPE_SLAVE)
-    String msg = ("{\"id\":\"" + String(DEVICE_ID) + "\""
-                  ",\"mA\":\"" + String(_current_mA, 2) + "\""
-                  ",\"V\":\"" + String(_busvoltage) + "\""
+    String msg = ("{\"id\":" + String(DEVICE_ID) +
+                  ",\"mA\":" + String(_current_mA, 2) +
+                  ",\"V\":" + String(_busvoltage) +
                   "}");
     WIRELESS_Broadcast(msg);
+#endif
+
+#if defined(DEVICE_TYPE_MASTER)
+    DEVICES_UpdateInfo(DEVICE_ID, _current_mA, _busvoltage);
 #endif
 
     vTaskDelay(pdMS_TO_TICKS(2000));

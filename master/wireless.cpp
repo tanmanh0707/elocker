@@ -2,40 +2,49 @@
 
 #define ESPNOW_WIFI_CHANNEL 6
 
-class ESP_NOW_Peer_Class : public ESP_NOW_Peer {
+class ESP_NOW_Broadcast_Peer : public ESP_NOW_Peer {
 public:
-  // Constructor of the class
-  ESP_NOW_Peer_Class(const uint8_t *mac_addr, uint8_t channel, wifi_interface_t iface, const uint8_t *lmk) : ESP_NOW_Peer(mac_addr, channel, iface, lmk) {}
+  // Constructor of the class using the broadcast address
+  ESP_NOW_Broadcast_Peer(uint8_t channel, wifi_interface_t iface, const uint8_t *lmk) : ESP_NOW_Peer(ESP_NOW.BROADCAST_ADDR, channel, iface, lmk) {}
 
   // Destructor of the class
-  ~ESP_NOW_Peer_Class() {}
+  ~ESP_NOW_Broadcast_Peer() { remove(); }
 
-  // Function to register the master peer
-  bool add_peer() {
-    if (!add()) {
-      log_e("Failed to register the broadcast peer");
+  // Function to properly initialize the ESP-NOW and register the broadcast peer
+  bool begin() {
+    if (!ESP_NOW.begin() || !add()) {
+      log_e("Failed to initialize ESP-NOW or register the broadcast peer");
       return false;
     }
     return true;
   }
 
-  // Function to print the received messages from the master
-  void onReceive(const uint8_t *data, size_t len, bool broadcast) {
-    log_i("Received a message from " MACSTR " (%s)\n", MAC2STR(addr()), broadcast ? "broadcast" : "unicast");
-    log_i("  Message: %s\n", (char *)data);
-  }
-
+  // Function to send a message to all devices within the network
   bool send_message(const uint8_t *data, size_t len) {
+#if defined(DEVICE_TYPE_SLAVE)
     if (!send(data, len)) {
       log_e("Failed to broadcast message");
       return false;
     }
+#endif
     return true;
+  }
+
+  void onSent(bool success) {
+
   }
 };
 
 /* Global Variables */
-ESP_NOW_Peer_Class *broadcast_peer_ = nullptr;
+static ESP_NOW_Broadcast_Peer _broadcaster(ESPNOW_WIFI_CHANNEL, WIFI_IF_STA, nullptr);
+
+#if defined(DEVICE_TYPE_MASTER)
+void onBroadcastReceive(const esp_now_recv_info_t *info, const uint8_t *data, int len, void *arg)
+{
+  // log_i("Received a message from " MACSTR " ", MAC2STR(info->src_addr));
+  DEVICES_UpdateInfo(data, len);
+}
+#endif
 
 void WIRELESS_Init()
 {
@@ -55,22 +64,19 @@ void WIRELESS_Init()
     ESP.restart();
   }
 
-  broadcast_peer_ = new ESP_NOW_Peer_Class(ESP_NOW.BROADCAST_ADDR, ESPNOW_WIFI_CHANNEL, WIFI_IF_STA, nullptr);
-  if (!broadcast_peer_->add_peer()) {
-    log_e("Failed to register the broadcast peer");
-    delay(5000);
-    ESP.restart();
+  if (!_broadcaster.begin()) {
+    log_e("Failed to register the _broadcaster");
   }
 
+#if defined(DEVICE_TYPE_MASTER)
   // Register the new peer callback
-  // ESP_NOW.onNewPeer(register_new_node, nullptr);
-
-  log_i("ESP-NOW version: %d, max data length: %d\n", ESP_NOW.getVersion(), ESP_NOW.getMaxDataLen());
+  ESP_NOW.onNewPeer(onBroadcastReceive, nullptr);
+#endif
 }
 
 bool WIRELESS_Broadcast(const uint8_t *data, size_t len)
 {
-  return broadcast_peer_->send_message(data, len);
+  return _broadcaster.send_message(data, len);
 }
 
 bool WIRELESS_Broadcast(String msg)
