@@ -105,28 +105,43 @@ async function main() {
     return;
   }
 
-  console.log("Danh sách COM port:");
+  console.log("COM port list:");
   ports.forEach((p, idx) => {
     console.log(`${idx + 1}) ${p.path} ${p.friendlyName || ""}`);
   });
 
-  const ans = await questionAsync("Chọn cổng (số): ");
-  const idx = Number(ans.trim()) - 1;
-  if (idx < 0 || idx >= ports.length) {
-    console.log("❌ Lựa chọn không hợp lệ.");
-    return;
-  }
+  let cuPortIdx = 0;
+  do {
+    const ans = await questionAsync("Select CU Lock COM port: ");
+    cuPortIdx = Number(ans.trim()) - 1;
+    if (cuPortIdx < 0 || cuPortIdx >= ports.length) {
+      console.log("❌ Invalid selection");
+    }
+  } while (0 <= cuPortIdx && cuPortIdx <= ports.length);
 
-  const serialPath = ports[idx].path;
-  const baud = 115200;
+  let ssPortIdx = 0;
+  do {
+    const ans = await questionAsync("Select Sensor COM port: ");
+    ssPortIdx = Number(ans.trim()) - 1;
+    if (ssPortIdx < 0 || ssPortIdx >= ports.length) {
+      console.log("❌ Invalid selection");
+    } else if (ssPortIdx == cuPortIdx) {
+      console.log(ports[cuPortIdx].path, "has been selected by CU Lock");
+    }
+  } while (ssPortIdx < 0 || ssPortIdx >= ports.length || ssPortIdx == cuPortIdx);
 
   let recvBuffer = Buffer.alloc(0);
   let pendingResolver = null;
   let timeoutHandle = null;
 
-  const port = new SerialPort({ path: serialPath, baudRate: baud, autoOpen: false });
+  const cuPath = ports[cuPortIdx].path;
+  const ssPath = ports[ssPortIdx].path;
+  const cuBaud = 19200;
+  const ssBaud = 115200;
+  const cuPort = new SerialPort({ path: cuPath, baudRate: cuBaud, autoOpen: false });
+  const ssPort = new SerialPort({ path: ssPath, baudRate: ssBaud, autoOpen: false });
 
-  port.on("data", (chunk) => {
+  ssPort.on("data", (chunk) => {
 	const hexArray = [...chunk].map(b => b.toString(16).padStart(2, "0"));
 	console.log("Received:", hexArray.join(" "));
 	  
@@ -140,26 +155,26 @@ async function main() {
       recvBuffer = recvBuffer.slice(etx + 1);
 
       if (validatePacket(packet)) {
-		if (pendingResolver) {
-		  if (timeoutHandle) {
-			clearTimeout(timeoutHandle);
-			timeoutHandle = null;
-		  }
-          pendingResolver(packet);
-          pendingResolver = null;
-	    } else {
-		  console.log("No Resolver");
-		}
-      } else {
-		console.log("CRC failed");
-	  }
-    }
+        if (pendingResolver) {
+          if (timeoutHandle) {
+            clearTimeout(timeoutHandle);
+            timeoutHandle = null;
+          }
+            pendingResolver(packet);
+            pendingResolver = null;
+          } else {
+            console.log("No Resolver");
+          }
+        } else {
+		      console.log("CRC failed");
+	      }
+      }
   });
 
-  port.on("open", () => console.log(`✅ Opened ${serialPath} @${baud}`));
-  port.on("error", (err) => console.error("⚠️ Serial error:", err.message));
+  ssPort.on("open", () => console.log(`✅ Sensor Opened ${ssPath} @${ssBaud}`));
+  ssPort.on("error", (err) => console.error("⚠️ Sensor error:", err.message));
 
-  await new Promise((res, rej) => port.open((err) => (err ? rej(err) : res())));
+  await new Promise((res, rej) => ssPort.open((err) => (err ? rej(err) : res())));
 
   function sendAndWait(pkt, timeout = 100) {
     return new Promise((resolve) => {

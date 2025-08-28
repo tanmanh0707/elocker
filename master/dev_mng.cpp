@@ -3,44 +3,47 @@
 #define DEVICE_NUM_BUFFER                   10
 
 typedef struct {
+  DeviceId_t id;
   float mA;
   float V;
-} DeviceInfo_st;
+} __attribute__((packed)) DeviceInfo_st;
 
-uint32_t DEVICE_NUM_MAX = 21;
-// DeviceInfo_st devices_[DEVICE_NUM_MAX];
-DeviceInfo_st *pDevices_ = NULL;
+std::vector<DeviceInfo_st> devices_;
 
 static void dev_mng_task(void *param);
 
-void DEVICES_Init()
+int8_t LocalDeviceExist(DeviceId_t id)
 {
-  if (pDevices_ == NULL) {
-    pDevices_ = (DeviceInfo_st *)calloc(sizeof(DeviceInfo_st), DEVICE_NUM_MAX);
+  int8_t index;
+  for (size_t i = 0; i < devices_.size(); i++) {
+    if (devices_[i].id == id) {
+      index = i;
+      break;
+    }
   }
 
+  return index;
+}
+
+void DEVICES_Init()
+{
   xTaskCreate(dev_mng_task, "dev_mng_task", 4096, NULL, 2, NULL);
 }
 
 void DEVICES_UpdateInfo(DeviceId_t id, float mA, float V)
 {
-  if (id >= DEVICE_NUM_MAX) {
-    /* Resize */
-    DEVICE_NUM_MAX = id + DEVICE_NUM_BUFFER;
-    DeviceInfo_st *tmp = (DeviceInfo_st *)calloc(sizeof(DeviceInfo_st), DEVICE_NUM_MAX);
-    if (tmp) {
-      free(pDevices_);
-      pDevices_ = tmp;
-    }
+  int8_t dev_index = LocalDeviceExist(id);
+  if (dev_index >= 0) {
+    devices_[dev_index].id = id;
+    devices_[dev_index].mA = mA;
+    devices_[dev_index].V = V;
+  } else {
+    DeviceInfo_st new_dev = { id, mA, V };
+    devices_.push_back(new_dev);
+    log_i("New device (%d)", id);
   }
 
-  if (id < DEVICE_NUM_MAX) {
-    pDevices_[id].mA = mA;
-    pDevices_[id].V = V;
-    log_i("(%d) %.2f (mA), %.2f (V)", id, mA, V);
-  } else {
-    log_e("Invalid Id (%d)", id);
-  }
+  log_i("(%d) %.2f (mA), %.2f (V)", id, mA, V);
 }
 
 void DEVICES_UpdateInfo(const uint8_t *data, int len)
@@ -58,5 +61,22 @@ void dev_mng_task(void *param)
   while (1)
   {
     delay(2000);
+#if (CORE_DEBUG_LEVEL == 0)
+    //Using Serial to transmit data to PC
+    size_t packet_len = devices_.size() * sizeof(DeviceInfo_st) + 1 /* Number of device */;
+
+    uint8_t *packet = (uint8_t *)malloc(packet_len);
+    if (packet) {
+      packet[0] = (uint8_t)devices_.size();
+      uint8_t *ptr = &packet[1];
+      for (size_t i = 0; i < packet[0]; i++) {
+        *ptr = devices_[i].id; ptr++;
+        memcpy(ptr, &devices_[i].mA, sizeof(float)); ptr += sizeof(float);
+        memcpy(ptr, &devices_[i].V, sizeof(float)); ptr += sizeof(float);
+      }
+    } else {
+      //
+    }
+#endif
   }
 }
