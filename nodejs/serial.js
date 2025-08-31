@@ -2,17 +2,17 @@ const { SerialPort } = require("serialport");
 const http = require("http");
 const readline = require("readline");
 
-const CMD_GET_CURRENT_mA = 0x00;
-const CMD_SET_THRESHOLD = 0x01;
-const ID_BROADCAST = 0x00;
-
 const SENSOR_STATUS_NOT_CHARGE = 0;
 const SENSOR_STATUS_CHARGING = 1;
 const SENSOR_STATUS_FULL_CHARGED = 2;
+const SENSOR_FULL_CHARGED_DELAY = 5;
 
 const CU_DEVICE_ID = 0;
 
+var MESS_CU_TEMP = [0x02, 0x00, 0x30, 0x03, 0x35];
 var sensorThreshold = 200;  //mA
+var cuPort;
+var ssPort;
 
 function  delay(time){
   return new Promise((resolve) => setTimeout(resolve, time))
@@ -55,10 +55,14 @@ function crc16_modbus(buffer) {
   return crc & 0xFFFF;
 }
 
-function buildCuLockGetStatusMessage() {
+function dumpArrayHex(header, arr) {
+  console.log(header, arr.toString('hex').match(/.{1,2}/g).join(' '));
+}
+
+function buildCuLockGetStatusMessage(cu_id) {
   let MESS_CU = [...MESS_CU_TEMP];
   MESS_CU[2] = 0x30;
-  MESS_CU[1] = (deviceId << 4) | 0;
+  MESS_CU[1] = (cu_id << 4) | 0;
   let mess_sum = MESS_CU.slice(0, MESS_CU.length - 1);
   MESS_CU[4] = cuLockCheckSum(mess_sum);
   return Buffer.from(MESS_CU);
@@ -66,7 +70,7 @@ function buildCuLockGetStatusMessage() {
 
 function buildCuLockOpenMessage(deviceId, lockId) {
 	let MESS_CU = [...MESS_CU_TEMP];
-	MESS_CU[1]=(deviceId<<4)|(lockId);
+	MESS_CU[1]=(deviceId<<4)|(lockId - 1);
 	MESS_CU[2]=0x31;
 	let mess_sum=MESS_CU.slice(0,MESS_CU.length-1);
 	MESS_CU[4]=cuLockCheckSum(mess_sum);
@@ -87,7 +91,11 @@ function buildPacket(id, cmd, data) {
 
 function validateSensorPacket(packet) {
   if (packet.length < 6) {
-    console.log("❌ [SENSOR] Packet length error: ", packet.length, "(bytes)");
+    if (packet.length > 0) {
+      dumpArrayHex("❌ [SENSOR] Invalid length:", packet);
+    } else {
+      console.log("❌ Packet length = 0");
+    }
     return false;
   }
 
@@ -100,7 +108,7 @@ function validateSensorPacket(packet) {
   }
 
   const len = packet[1];
-  if (packet.length !== len + 5) {
+  if (packet.length !== len + 3) {
     console.log(`❌ Wrong packet length: packet=${packet.length}, len=${len}`);
     //return false;
   }
@@ -149,8 +157,8 @@ function parseSensorDevices(byteArray) {
     }
 
     let deviceId = buf[start];
-    let current = buf.readUInt32LE(start + 1); // mA
-    let voltage = buf.readUInt32LE(start + 5); // V
+    let current = Math.round(Math.abs(buf.readFloatLE(start + 1))) >>> 0; // mA
+    let voltage = Math.round(Math.abs(buf.readFloatLE(start + 5))) >>> 0; // V
 
     devices.push({
       id: deviceId,
@@ -182,27 +190,45 @@ function getSensorStatusString(status) {
   }
 }
 
-function handleSensorDevice(devices) {
+function cuLockOpen(cu_id, lock_id) {
+  let cuMsg = buildCuLockOpenMessage(cu_id, lock_id);
+
+  cuPort.write(cuMsg, (err) => {
+    if (err) {
+      console.error("Send failed:", err.message);
+    } else {
+      dumpArrayHex('[CU][TX]', cuMsg);
+    }
+  });
+}
+
+function cuLockStatus(cu_id) {
+  let cuMsg = buildCuLockGetStatusMessage(cu_id);
+
+  cuPort.write(cuMsg, (err) => {
+    if (err) {
+      console.error("Send failed:", err.message);
+    }
+  });
+}
+
+async function handleSensorDevice(devices) {
   console.log("Devices:", devices);
 
   for (let dev of devices) {
     let status = getSensorStatus(dev.mA);
-    if (status == SENSOR_STATUS_FULL_CHARGED) {
-      let cuOpenMsg = buildCuLockOpenMessage(CU_DEVICE_ID, dev.id);
-
-      cuPort.write(msg, (err) => {
-        if (err) {
-          console.error("Send failed:", err.message);
-        } else {
-          console.log("TX:", msg.toString('hex').match(/.{1,2}/g).join(' '));
-        }
-      });
+    if (status == SENSOR_STATUS_FULL_CHARGED && dev.full_cnt >= SENSOR_FULL_CHARGED_DELAY) {
+      if (dev.lock === true) {
+        cuLockOpen(CU_DEVICE_ID, dev.id);
+        await delay(250);
+        cuLockStatus(CU_DEVICE_ID);
+      }
     }
   }
 }
 
 async function main() {
-  var sensorDevices = [{id: 0, mA: 0, V: 0}]
+  var sensorDevices = []
 
   const ports = await SerialPort.list();
   if (ports.length === 0) {
@@ -243,25 +269,48 @@ async function main() {
   const ssPath = ports[ssPortIdx].path;
   const cuBaud = 19200;
   const ssBaud = 115200;
-  const cuPort = new SerialPort({ path: cuPath, baudRate: cuBaud, autoOpen: false });
-  const ssPort = new SerialPort({ path: ssPath, baudRate: ssBaud, autoOpen: false });
+  cuPort = new SerialPort({ path: cuPath, baudRate: cuBaud, autoOpen: false });
+  ssPort = new SerialPort({ path: ssPath, baudRate: ssBaud, autoOpen: false });
 
   ssPort.on("data", (chunk) => {
+    dumpArrayHex("[RX] [SENSOR]", chunk)
+
     recvBuffer = Buffer.concat([recvBuffer, chunk]);
     while (recvBuffer.length >= 7) {
       const stx = recvBuffer.indexOf(0x02);
-      const etx = recvBuffer.indexOf(0x03, stx + 1);
-      if (stx === -1 || etx === -1) break;
+      if (stx === -1) break;
+      if (recvBuffer.length < recvBuffer[1] + 3) {
+        console.log("Invalid length: recvBuffer[1]:", recvBuffer[1], "- recv len:", recvBuffer.length);
+        break;
+      }
 
-      const packet = recvBuffer.subarray(stx, etx + 1);
-      recvBuffer = recvBuffer.subarray(etx + 1);
-
+      const packet = recvBuffer.subarray(stx, recvBuffer[1] + 3);
       if (validateSensorPacket(packet)) {
-        sensorDevices = parseSensorDevices(packet.subarray(2));
+        let tmpDevices = parseSensorDevices(packet.subarray(2));
+
+        tmpDevices.forEach(dev => {
+          let found = sensorDevices.find(o => o.id === dev.id);
+          if (found) {
+            if (dev.mA < sensorThreshold && dev.mA > 10) {
+              found.full_cnt++;
+            } else {
+              found.full_cnt = 0;
+            }
+            found.mA = dev.mA;
+            found.V = dev.V;
+          } else {
+            sensorDevices.push({
+              ...dev,
+              lock: false,
+              full_cnt: 0
+            });
+          }
+        });
+
         handleSensorDevice(sensorDevices);
+        recvBuffer = recvBuffer.subarray(recvBuffer[1] + 3);
       } else {
-        const hexArray = [...chunk].map(b => b.toString(16).padStart(2, "0"));
-        console.log("[RX] [SENSOR] CRC failed:", hexArray.join(" "));
+        dumpArrayHex("❌ [SENSOR] Validate failed", packet);
       }
     }
   });
@@ -270,12 +319,26 @@ async function main() {
   ssPort.on("error", (err) => console.error("⚠️ [SENSOR] Error:", err.message));
 
   /* Init CU Lock COM port */
-  cuPort.on("data", (chunk) => {
-    console.log("[CU][RX]:", data.toString('hex').match(/.{1,2}/g).join(' '));
-    recvBuffer = Buffer.concat([recvBuffer, chunk]);
+  cuPort.on("data", (data) => {
+    if (data.length > 0 && data[0] === 0x02 && data[1] === CU_DEVICE_ID && data[2] === 0x35) {
+      let status = (data[4] << 8) | (data[3])
+
+      for (let dev_id = 0; dev_id < 16; dev_id++) {
+        let lock_stt = ((status >> dev_id) & 1) === 1? true : false;
+        let found = sensorDevices.find(o => o.id === dev_id + 1);
+        if (found) {
+          if (found.lock !== lock_stt) {
+            console.log("[CU][" + dev_id + "]", lock_stt? "true" : "false");
+            found.lock = lock_stt;
+          }
+        }
+      }
+    } else {
+      dumpArrayHex("❌ [CU][RX]:", data);
+    }
   });
 
-  cuPort.on("open", () => console.log(`✅ [CU] Opened ${ssPath} @${ssBaud}`));
+  cuPort.on("open", () => console.log(`✅ [CU] Opened ${cuPath} @${cuBaud}`));
   cuPort.on("error", (err) => console.error("⚠️ [CU] Error:", err.message));
 
   await new Promise((res, rej) => ssPort.open((err) => (err ? rej(err) : res())));
@@ -287,7 +350,7 @@ async function main() {
 
       for (let dev of sensorDevices) {   
         let statusStr = getSensorStatusString(getSensorStatus(dev.mA));
-        results.push({ id, mA: dev.mA, status: statusStr });
+        results.push({ id: dev.id, mA: dev.mA, V: dev.V, status: statusStr, lock: dev.lock });
       }
 
 	    console.log(results);
@@ -308,6 +371,8 @@ async function main() {
           } else {
             sensorThreshold = threshold;
             console.log("✅ Threshold set to", sensorThreshold, "(mA)")
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ message: 'success' }, null, 2));
           }
 		    } catch (e) {
           res.writeHead(400);
@@ -320,6 +385,10 @@ async function main() {
       res.end("Not found");
     }
   });
+
+  setInterval(() => {
+    cuLockStatus(CU_DEVICE_ID);
+  }, 2000);
 
   const PORT_HTTP = 3000;
   server.listen(PORT_HTTP, () => {

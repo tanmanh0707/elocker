@@ -132,6 +132,29 @@ static void uart_event_task(void *pvParameters)
 bool UART_SendBytes(uint8_t *data, uint16_t data_len)
 {
   int sent_len = 0;
+  uint16_t packet_len = data_len + 5;
+  uint8_t *packet = (uint8_t *)malloc(packet_len);
+  if (packet) {
+    packet[0] = STX;
+    packet[1] = data_len + 2;  //ID and CRC16
+    // packet[2] = DEVICE_ID;
+    memcpy(&packet[2], data, data_len);
+    uint16_t crc = LocalCalculateCrc16(&packet[1], data_len + 1);
+    packet[packet_len - 3] = crc >> 8;
+    packet[packet_len - 2] = crc & 0xFF;
+    packet[packet_len - 1] = ETX;
+    // sent_len = uart_write_bytes(UART_PORT, packet, packet_len);
+    sent_len = Serial.write(packet, packet_len);
+
+    free(packet);
+  }
+
+  return (sent_len == packet_len);
+}
+
+bool UART1_SendBytes(uint8_t *data, uint16_t data_len)
+{
+  int sent_len = 0;
   uint16_t packet_len = data_len + 6;
   uint8_t *packet = (uint8_t *)malloc(packet_len);
   if (packet) {

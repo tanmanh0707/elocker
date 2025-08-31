@@ -36,6 +36,7 @@ class MainScreen extends StatefulWidget {
 
 class _MainScreenState extends State<MainScreen> {
   List<Map<String, dynamic>> devices = [];
+  List<dynamic> deviceList = [];
   String ip = "";
   String port = "";
   int threshold = 0;
@@ -65,6 +66,7 @@ class _MainScreenState extends State<MainScreen> {
       final res = await http.post(url);
       if (res.statusCode == 200) {
         final List<dynamic> data = jsonDecode(res.body)["results"];
+        deviceList = jsonDecode(res.body)["results"];
         setState(() {
           devices = data
               .map((e) => {"id": e["id"], "status": e["status"]})
@@ -92,7 +94,7 @@ class _MainScreenState extends State<MainScreen> {
         body: jsonEncode({"threshold": threshold}),
       );
       if (res.statusCode == 200) {
-        _showDialog("OK");
+        _showDialog("Success");
       } else {
         _showDialog("Fail");
       }
@@ -107,12 +109,15 @@ class _MainScreenState extends State<MainScreen> {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text("Result"),
-        content: Text(msg),
+        title: Text("Result", 
+              style: TextStyle(fontSize: 16.sp)),
+        content: Text(msg, 
+              style: TextStyle(fontSize: 16.sp),),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text("OK"),
+            child: Text("OK", 
+              style: TextStyle(fontSize: 16.sp)),
           ),
         ],
       ),
@@ -129,6 +134,14 @@ class _MainScreenState extends State<MainScreen> {
         return const Icon(Icons.battery_std, color: Colors.grey);
       default:
         return const Icon(Icons.battery_alert, color: Colors.grey);
+    }
+  }
+
+  Icon _getLockIcon(bool lock) {
+    if (lock) {
+      return const Icon(Icons.lock, color: Colors.green,);
+    } else {
+      return const Icon(Icons.lock_open, color: Colors.red,);
     }
   }
 
@@ -152,7 +165,8 @@ class _MainScreenState extends State<MainScreen> {
               }
             },
             itemBuilder: (context) => [
-              const PopupMenuItem(value: "settings", child: Text("Settings")),
+              PopupMenuItem(value: "settings", child: Text("Settings", 
+              style: TextStyle(fontSize: 16.sp))),
             ],
           ),
         ],
@@ -185,19 +199,30 @@ class _MainScreenState extends State<MainScreen> {
                 child: ListView.builder(
                   itemCount: devices.length,
                   itemBuilder: (context, index) {
-                    final d = devices[index];
+                    final d = deviceList[index];
                     return ListTile(
-                      leading: Icon(
-                        _getBatteryIcon(d["status"]).icon,
-                        color: _getBatteryIcon(d["status"]).color,
-                        size: 28.sp, // ✅ icon tự scale
+                      leading: SizedBox(
+                        width: 80.sp,
+                        child: Row(
+                          children: [
+                          Icon(
+                            _getBatteryIcon(d["status"]).icon,
+                            color: _getBatteryIcon(d["status"]).color,
+                            size: 28.sp, // ✅ icon tự scale
+                          ),
+                          Icon(
+                            _getLockIcon(d["lock"]).icon,
+                            color: _getLockIcon(d["lock"]).color,
+                            size: 28.sp, // ✅ icon tự scale
+                          )],
+                        ),
                       ),
                       title: Text(
                         "ID: ${d["id"]}",
                         style: TextStyle(fontSize: 16.sp),
                       ),
                       subtitle: Text(
-                        "Status: ${d["status"]}",
+                        "Current: ${d["mA"]} (mA)",
                         style: TextStyle(fontSize: 14.sp),
                       ),
                     );
@@ -268,6 +293,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         child: Column(
           children: [
             TextField(
+              style: TextStyle(fontSize: 16.sp),
               controller: ipCtrl,
               decoration: const InputDecoration(
                 labelText: "IP Address",
@@ -277,6 +303,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             const SizedBox(height: 16),
             TextField(
+              style: TextStyle(fontSize: 16.sp),
               controller: portCtrl,
               decoration: const InputDecoration(
                 labelText: "Port",
@@ -286,6 +313,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             const SizedBox(height: 16),
             TextField(
+              style: TextStyle(fontSize: 16.sp),
               controller: thresholdCtrl,
               decoration: const InputDecoration(
                 labelText: "Threshold (mA)",
@@ -294,7 +322,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               keyboardType: TextInputType.number,
             ),
             const SizedBox(height: 20),
-            ElevatedButton(onPressed: _saveSettings, child: const Text("Save")),
+            ElevatedButton(onPressed: _saveSettings, child: Text("Save", 
+              style: TextStyle(fontSize: 16.sp))),
           ],
         ),
       ),
