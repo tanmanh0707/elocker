@@ -14,11 +14,13 @@ static void sensor_task(void *arg);
 void SENSOR_Setup()
 {
   Wire.setPins(INA219_SDA_PIN, INA219_SCL_PIN);
-  if (! ina219.begin(&Wire)) {
-    log_e("Failed to find INA219 chip");
-  } else {
-    _deviceFound = true;
+
+  log_i("Searching for INA219...");
+  while (! ina219.begin(&Wire)) {
+    delay(2000);
   }
+
+  _deviceFound = true;
 
   // To use a slightly lower 32V, 1A range (higher precision on amps):
   //ina219.setCalibration_32V_1A();

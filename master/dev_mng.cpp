@@ -61,12 +61,18 @@ void dev_mng_task(void *param)
   while (1)
   {
     delay(2000);
-#if (CORE_DEBUG_LEVEL == 0)
-    //Using Serial to transmit data to PC
+
     if (devices_.size() == 0) {
       continue;
     }
 
+    //TODO:
+
+#if 1
+
+#else
+#if (CORE_DEBUG_LEVEL == 0)
+    //Using Serial to transmit data to PC
     size_t packet_len = devices_.size() * sizeof(DeviceInfo_st) + 1 /* Number of device */;
 
     uint8_t *packet = (uint8_t *)malloc(packet_len);
@@ -84,6 +90,7 @@ void dev_mng_task(void *param)
     } else {
       //
     }
-#endif
+#endif  //UART - LOG_DEBUG = 0
+#endif  //Wireless
   }
 }
