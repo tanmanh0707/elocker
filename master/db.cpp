@@ -10,23 +10,23 @@
 
 static Preferences _pref;
 
-byte DB_GetEspNowChannel()
+uint8_t DB_GetEspNowChannel()
 {
-  byte channel;
+  uint8_t channel;
   _pref.begin(PREF_NAME_SETTINGS, PREF_READONLY);
-  channel = _pref.getChar(PREF_KEY_ESPNOW_CHANNEL, 1);
+  channel = _pref.getUChar(PREF_KEY_ESPNOW_CHANNEL, 1);
   _pref.end();
   log_i("%d", channel);
 
   return channel;
 }
 
-void DB_SetEspNowChannel(byte new_channel)
+void DB_SetEspNowChannel(uint8_t new_channel)
 {
-  byte db_channel = DB_GetEspNowChannel();
+  uint8_t db_channel = DB_GetEspNowChannel();
   if (db_channel != new_channel) {
-    _pref.begin(PREF_NAME_SETTINGS, PREF_READONLY);
-    _pref.putChar(PREF_KEY_ESPNOW_CHANNEL, new_channel);
+    _pref.begin(PREF_NAME_SETTINGS, PREF_READWRITE);
+    _pref.putUChar(PREF_KEY_ESPNOW_CHANNEL, new_channel);
     _pref.end();
 
     log_i("DB Set channel: %d", new_channel);

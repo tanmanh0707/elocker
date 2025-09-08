@@ -16,9 +16,9 @@ void setup(void)
   }
 #endif
 
-  UART_Init();
+  // UART_Init();
   WIRELESS_Init();
-  SENSOR_Setup();
+  // SENSOR_Setup();
 }
 
 void loop(void) 

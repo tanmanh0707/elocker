@@ -1,6 +1,5 @@
 #include <Wire.h>
 #include <Adafruit_INA219.h>
-#include <ESP32_NOW.h>
 #include <WiFi.h>
 #include <AsyncUDP.h>
 #include <AsyncTCP.h>
@@ -58,9 +57,11 @@ void WIFI_Init();
 void WIFI_AP_ServerLoop();
 
 void WIRELESS_Init();
-bool WIRELESS_Broadcast(uint8_t *data, size_t len);
+void WIRELESS_Task();
+bool WIRELESS_Broadcast(const uint8_t *data, size_t len);
 bool WIRELESS_Broadcast(String msg);
-
+bool WIRELESS_IsDiscovered();
+void WIRELESS_ChannelDiscoverLoop(byte channel_start = CONFIG_ESPNOW_DEFAULT_CHANNEL);
 void SENSOR_Setup();
 
 /* LED */
@@ -73,5 +74,5 @@ void DEVICES_UpdateInfo(const uint8_t *data, int len);
 
 void DB_GetWifiCredentials(String &ssid, String &password);
 void DB_SetWifiCredentials(String &ssid, String &password);
-byte DB_GetEspNowChannel();
-void DB_SetEspNowChannel(byte new_channel);
+uint8_t DB_GetEspNowChannel();
+void DB_SetEspNowChannel(uint8_t new_channel);

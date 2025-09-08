@@ -1,6 +1,9 @@
 #include "common.h"
+#include <esp_now.h>
 
 #define TCP_QUEUE_SIZE                        10
+
+uint8_t _broadcastAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
 #if defined(DEVICE_TYPE_MASTER)
 static AsyncUDP _udpServer;
@@ -13,98 +16,142 @@ static TaskHandle_t _tcpTaskHdl = NULL;
 static QueueHandle_t _tcpQ = NULL;
 #endif
 
+#if defined(DEVICE_TYPE_SLAVE)
+static bool espnowDiscovered_ = false;
+static bool LocalModifyBroadcastPeer(uint8_t new_channel);
+#endif
+
 static const char *MSG_DISCOVER = "DISCOVER";
+esp_now_peer_info_t broadcastPeer_ = {0};
 
-class ESP_NOW_Broadcast_Peer : public ESP_NOW_Peer {
-private:
-#if defined(DEVICE_TYPE_SLAVE)
-  bool m_discovered;
-#endif
-
-public:
-  // Constructor of the class using the broadcast address
-  ESP_NOW_Broadcast_Peer(uint8_t channel, wifi_interface_t iface, const uint8_t *lmk) : ESP_NOW_Peer(ESP_NOW.BROADCAST_ADDR, 1, iface, lmk) {
-#if defined(DEVICE_TYPE_SLAVE)
-    m_discovered = false;
-#endif
-  }
-
-  // Destructor of the class
-  ~ESP_NOW_Broadcast_Peer() { remove(); }
-
-  // Function to properly initialize the ESP-NOW and register the broadcast peer
-  bool begin() {
-    if (!ESP_NOW.begin() || !add()) {
-      log_e("Failed to initialize ESP-NOW or register the broadcast peer");
-      return false;
-    }
-    return true;
-  }
-
-  // Function to send a message to all devices within the network
-  bool send_message(const uint8_t *data, size_t len) {
-#if defined(DEVICE_TYPE_SLAVE)
-    if (!send(data, len)) {
-      log_e("Failed to broadcast message");
-      return false;
-    }
-#endif
-    return true;
-  }
-
-  void onSent(bool success) {
-
-  }
-
-#if defined(DEVICE_TYPE_SLAVE)
-  void setDiscovered(bool value) {
-    m_discovered = value;
-  }
-
-  bool isDiscovered(void) {
-    return m_discovered;
-  }
-#endif
-};
-
-/* Global Variables */
-static ESP_NOW_Broadcast_Peer *_broadcaster = nullptr;
-
-void onBroadcastReceive(const esp_now_recv_info_t *info, const uint8_t *data, int len, void *arg)
+void onBroadcastReceive(const esp_now_recv_info_t *info, const uint8_t *data, int len)
 {
-  // log_i("Received a message from " MACSTR " ", MAC2STR(info->src_addr));
+  log_i("Received a message from " MACSTR " - len: %d - %.*s", MAC2STR(info->src_addr), len, len, data);
 #if defined(DEVICE_TYPE_MASTER)
   if (memcmp(MSG_DISCOVER, data, len) == 0) {
-    WIRELESS_Broadcast(String(MSG_DISCOVER));
+    WIRELESS_Broadcast(String(MSG_DISCOVER) + "," + String(broadcastPeer_.channel));
   } else {
     DEVICES_UpdateInfo(data, len);
   }
 #endif
 
 #if defined(DEVICE_TYPE_SLAVE)
-  if (memcmp(MSG_DISCOVER, data, len) == 0) {
-    log_i("Discovered");
-    _broadcaster->setDiscovered(true);
+  if (memcmp(MSG_DISCOVER, data, strlen(MSG_DISCOVER)) == 0) {
+    espnowDiscovered_ = true;
+
+    String msg = String(data, len);
+    uint8_t discovered_channel = 0;
+    size_t commaIndex = msg.indexOf(',');
+
+    if (commaIndex != -1) {
+      String numStr = msg.substring(commaIndex + 1);
+      int value = numStr.toInt();
+      discovered_channel = value;
+    } else {
+      discovered_channel = broadcastPeer_.channel;
+    }
+
+    log_i("Discovered Channel: %d", discovered_channel);
+    DB_SetEspNowChannel(discovered_channel);
+
+    if (discovered_channel != broadcastPeer_.channel) {
+      LocalModifyBroadcastPeer(discovered_channel);
+    }
   } else {
-    log_e("Unhandled message: %*s", len, data);
+    log_e("Unhandled message: %.*s", len, data);
   }
 #endif
 }
 
+void OnDataSent(const esp_now_send_info_t *tx_info, esp_now_send_status_t status)
+{
+  if (status == ESP_NOW_SEND_SUCCESS) {
+
+  } else {
+    log_e("Send failed!");
+  }
+}
+
+bool LocalModifyBroadcastPeer(uint8_t new_channel)
+{
+  broadcastPeer_.channel = new_channel;
+
+  esp_err_t result = esp_now_mod_peer(&broadcastPeer_);
+  if (result == ESP_OK) {
+    log_i("Broadcast Peer channel changed to %d", new_channel);
+  } else if (result == ESP_ERR_ESPNOW_NOT_INIT) {
+    log_e("ESPNOW Not Init");
+  } else if (result == ESP_ERR_ESPNOW_ARG) {
+    log_e("Invalid Argument");
+  } else if (result == ESP_ERR_ESPNOW_FULL) {
+    log_e("Peer list full");
+  } else if (result == ESP_ERR_ESPNOW_NO_MEM) {
+    log_e("Out of memory");
+  }
+  
+  return (result == ESP_OK);
+}
+
+bool LocalRegisterBroadcastPeer(const uint8_t *mac_addr, uint8_t channel)
+{
+  esp_err_t result;
+
+  char macStr[18] = {0};
+  snprintf(macStr, sizeof(macStr), "%02x:%02x:%02x:%02x:%02x:%02x",
+           mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
+
+  if ( ! esp_now_is_peer_exist(mac_addr))
+  {
+    // Register peer
+    memcpy(broadcastPeer_.peer_addr, mac_addr, ESP_NOW_ETH_ALEN);
+    broadcastPeer_.channel = channel;  
+    broadcastPeer_.encrypt = false;
+    broadcastPeer_.ifidx = WIFI_IF_STA;
+
+    // Add peer
+    result = esp_now_add_peer(&broadcastPeer_);
+    if (result != ESP_OK) {
+      log_e("Failed to add peer %s", macStr);
+      if (result == ESP_ERR_ESPNOW_NOT_INIT) {
+        log_e("ESPNOW Not Init");
+      } else if (result == ESP_ERR_ESPNOW_ARG) {
+        log_e("Invalid Argument");
+      } else if (result == ESP_ERR_ESPNOW_FULL) {
+        log_e("Peer list full");
+      } else if (result == ESP_ERR_ESPNOW_NO_MEM) {
+        log_e("Out of memory");
+      } else if (result == ESP_ERR_ESPNOW_EXIST) {
+        log_e("Peer Exists");
+      } else {
+        log_e("Unknown error (%d - 0x%X)", result, result);
+      }
+    } else {
+      log_i("Successfully add peer %s", macStr);
+    }
+  } else {
+    log_w("Peer is already added %s", macStr);
+  }
+
+  return (result == ESP_OK);
+}
+
 #if defined(DEVICE_TYPE_SLAVE)
-void WIRELESS_ChannelDiscoverLoop(byte channel_start = CONFIG_ESPNOW_DEFAULT_CHANNEL)
+bool WIRELESS_IsDiscovered() {
+  return espnowDiscovered_;
+}
+
+void WIRELESS_ChannelDiscoverLoop(byte channel_start)
 {
   byte chn = channel_start;
 
   do {
-    log_i("Channel %d", chn);
+    log_i("Discovering on channel %d", chn);
     {
       WiFi.setChannel(chn);
-      _broadcaster->send_message((const uint8_t *)MSG_DISCOVER, strlen(MSG_DISCOVER));
-      delay(1000);
-      if (_broadcaster->isDiscovered()) {
-        log_i("Found channel: %d", chn);
-        DB_SetEspNowChannel(chn);
+      LocalModifyBroadcastPeer(chn);
+      WIRELESS_Broadcast((const uint8_t *)MSG_DISCOVER, strlen(MSG_DISCOVER));
+      delay(2000);
+      if (espnowDiscovered_) {
         break;
       }
     }
@@ -113,55 +160,90 @@ void WIRELESS_ChannelDiscoverLoop(byte channel_start = CONFIG_ESPNOW_DEFAULT_CHA
     if (chn > 11) {
       chn = 1;
     }
-
-    _broadcaster->setChannel(chn);
   } while (1);
+}
+
+void espnow_channel_discovery(void *param)
+{
+  WIRELESS_ChannelDiscoverLoop(broadcastPeer_.channel);
+  vTaskDelete(NULL);
 }
 #endif
 
+bool LocalEspnowSendData(const uint8_t *mac_addr, const uint8_t *data, size_t len)
+{
+  esp_err_t result = esp_now_send(mac_addr, data, len);
+
+  if (result == ESP_OK) {
+
+  } else if (result == ESP_ERR_ESPNOW_NOT_INIT) {
+    log_e("ESPNOW not Init.");
+  } else if (result == ESP_ERR_ESPNOW_ARG) {
+    log_e("Invalid Argument");
+  } else if (result == ESP_ERR_ESPNOW_INTERNAL) {
+    log_e("Internal Error");
+  } else if (result == ESP_ERR_ESPNOW_NO_MEM) {
+    log_e("ESP_ERR_ESPNOW_NO_MEM");
+  } else if (result == ESP_ERR_ESPNOW_NOT_FOUND) {
+    log_e("Peer not found.");
+  } else {
+    log_e("Unknown error (%d - 0x%X)", result, result);
+  }
+
+  return (result == ESP_OK);
+}
+
 void WIRELESS_Init()
 {
-
 #if defined(DEVICE_TYPE_SLAVE)
-  uint8_t espnow_channel = DB_GetEspNowChannel();
+  broadcastPeer_.channel = DB_GetEspNowChannel();
+  log_i("WiFi Starting...");
   WiFi.mode(WIFI_STA);
+  WiFi.setChannel(broadcastPeer_.channel);
+  while (!WiFi.STA.started()) {
+    delay(100);
+  }
 
-  log_i("Wi-Fi parameters:");
+  log_i("WiFi Started! Parameters:");
   log_i("  MAC Address: " MACSTR " ", MAC2STR(WiFi.macAddress()));
-  log_i("  ESPNOW Channel: %d", espnow_channel);
-#endif
-
-  // Register the new peer callback
-  ESP_NOW.onNewPeer(onBroadcastReceive, nullptr);
-
-#if defined(DEVICE_TYPE_SLAVE)
-  _broadcaster = new ESP_NOW_Broadcast_Peer(espnow_channel, WIFI_IF_STA, nullptr);
+  log_i("  ESPNOW Channel: %d", broadcastPeer_.channel);
 #endif
 
 #if defined(DEVICE_TYPE_MASTER)
-  _broadcaster = new ESP_NOW_Broadcast_Peer(WiFi.channel(), WIFI_IF_STA, nullptr);
+  broadcastPeer_.channel = WiFi.channel();
 #endif
 
-  if ( ! _broadcaster) {
-    log_e("Allocate broadcaster failed!");
-    delay(5000);
-    ESP.restart();
+  if (esp_now_init() != ESP_OK) {
+    log_e("Error initializing ESP-NOW");
+    while(1) { delay(500); }
+    return;
   }
 
-  if (!_broadcaster->begin()) {
-    log_e("Failed to register the _broadcaster");
+  esp_err_t err = esp_now_register_recv_cb(onBroadcastReceive);
+  if (err != ESP_OK) {
+    log_e("esp_now_register_recv_cb failed! 0x%x", err);
+    return;
   }
+
+  esp_now_register_send_cb(OnDataSent);
+
+  LocalRegisterBroadcastPeer(_broadcastAddress, broadcastPeer_.channel);
 
   LED_SendCmd(LED_CMD_WIFI_CONNECTING);
 
 #if defined(DEVICE_TYPE_SLAVE)
-  WIRELESS_ChannelDiscoverLoop(espnow_channel);
+  if (xTaskCreate(espnow_channel_discovery, "espnow_channel_discovery", 4*1024, NULL, 1, NULL) == pdFALSE) {
+    log_e("ESPNOW Channel Discover Create Task Failed!");
+    delay(5000);
+    ESP.restart();
+  }
 #endif
 }
 
 bool WIRELESS_Broadcast(const uint8_t *data, size_t len)
 {
-  return _broadcaster->send_message(data, len);
+  LocalEspnowSendData(_broadcastAddress, data, len);
+  return true;
 }
 
 bool WIRELESS_Broadcast(String msg)
@@ -169,10 +251,7 @@ bool WIRELESS_Broadcast(String msg)
   return WIRELESS_Broadcast((const uint8_t *)msg.c_str(), msg.length());
 }
 
-void WIRELESS_Task()
-{
-
-}
+void WIRELESS_Task() {}
 
 #if defined(DEVICE_TYPE_MASTER)
 static void tcp_handler_task(void *param);
@@ -308,6 +387,7 @@ void WIFI_AccessPoint()
 {
   LED_SendCmd(LED_CMD_AP_MODE);
 
+  WiFi.mode(WIFI_AP);
   WiFi.softAP(CONFIG_WIFI_AP_SSID, CONFIG_WIFI_AP_PASSWORD, 6);
   log_i("Access Point IP: %s", WiFi.softAPIP().toString().c_str());
 
@@ -353,12 +433,13 @@ void WIFI_Init()
       if (millis() - connect_time >= CONFIG_WIFI_CONNECT_TIMEOUT) {
         log_e("WiFi Connect Failed! Goto Access Point mode!");
         WIFI_AccessPoint();
+        break;
       }
     }
 
     if (WiFi.status() == WL_CONNECTED) {
       LED_SendCmd(LED_CMD_OFF);
-      log_i("WiFi Connected. IP: %s", WiFi.localIP().toString().c_str());
+      log_i("WiFi Connected. IP: %s - Channel: %d", WiFi.localIP().toString().c_str(), WiFi.channel());
       SERVER_Init();
     }
   }

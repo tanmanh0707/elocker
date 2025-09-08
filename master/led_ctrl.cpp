@@ -114,7 +114,38 @@ void LocalCheckLedCmdQueue()
   }
 }
 
+int wirelessNotDiscovered[2] = {50, 1000};
+int current_step = 0;
+
 void led_ctrl_task(void *arg)
+{
+  unsigned long delay_time = 0;
+  while (1)
+  {
+    if (WIRELESS_IsDiscovered() == false) {
+      if (current_step < sizeof(wirelessNotDiscovered) / sizeof(wirelessNotDiscovered[0]) - 1) {
+        current_step++;
+      } else {
+        current_step = 0;
+      }
+
+      delay_time = wirelessNotDiscovered[current_step];
+      if (current_step % 2 == 0) {
+        LocalLedOn();
+      } else {
+        LocalLedOff();
+      }
+    } else {
+      current_step = 0;
+      delay_time = 1000;
+      LocalLedOff();
+    }
+
+    delay(delay_time);
+  }
+}
+
+void led_ctrl_task_ex(void *arg)
 {
   LedCtrlMsg_st msg;
   LedCtrlCmd_e state = LED_CMD_MAX, prevState = LED_CMD_MAX;
