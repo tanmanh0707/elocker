@@ -3,8 +3,8 @@
 void setup(void) 
 {
   Serial.begin(115200);
-  delay(2000);
 
+  /* LED */
   LED_Init();
 
 #if defined(DEVICE_TYPE_MASTER)
@@ -16,9 +16,12 @@ void setup(void)
   }
 #endif
 
-  // UART_Init();
+#if defined(DEVICE_TYPE_SLAVE)
+  log_i("Device ID: %d", DB_GetDeviceId());
+#endif
+
   WIRELESS_Init();
-  // SENSOR_Setup();
+  SENSOR_Setup();
 }
 
 void loop(void) 

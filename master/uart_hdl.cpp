@@ -160,7 +160,7 @@ bool UART1_SendBytes(uint8_t *data, uint16_t data_len)
   if (packet) {
     packet[0] = STX;
     packet[1] = data_len + 3;  //ID and CRC16
-    packet[2] = DEVICE_ID;
+    packet[2] = CONFIG_MASTER_DEVICE_ID;
     memcpy(&packet[3], data, data_len);
     uint16_t crc = LocalCalculateCrc16(&packet[1], data_len + 2);
     packet[packet_len - 3] = crc >> 8;
@@ -180,7 +180,7 @@ void LocalHandleIncommingData(uint8_t *data, uint16_t data_len)
     uint8_t id = data[0];
     UartCmds_e cmd = (UartCmds_e)data[1];
 
-    if (id == UART_PROTOCOL_BROADCAST || id == DEVICE_ID)
+    if (id == UART_PROTOCOL_BROADCAST || id == CONFIG_MASTER_DEVICE_ID)
     {
       switch (cmd)
       {

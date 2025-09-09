@@ -8,8 +8,8 @@ uint8_t _broadcastAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 #if defined(DEVICE_TYPE_MASTER)
 static AsyncUDP _udpServer;
 static AsyncServer _tcpServer(CONFIG_TCP_SERVER_PORT);
-const char *udp_broadcast_msg = "Where are you?";
-const char *udp_response_msg = "Here I am";
+const char *udp_broadcast_msg = "Where are you, eLocker?";
+const char *udp_response_msg = "Here I am, eLocker";
 static AsyncClient *_tcpClient = nullptr;
 static WebServer _apServer(80);
 static TaskHandle_t _tcpTaskHdl = NULL;
@@ -309,7 +309,7 @@ void SERVER_Init()
     client->onData([](void *arg, AsyncClient *client, void *data, size_t len) {
       log_d("** data received by client: %" PRIu16 ": len=%u", client->localPort(), len);
       log_d("%*s", len, data);
-      // SENSOR_HandleTcpMsg((uint8_t *)data, len);
+      // TODO: Handler
     });
   }, NULL);
 
@@ -331,6 +331,17 @@ void SERVER_Send(String &msg)
       log_e("TCP Write failed!");
     } else {
       log_i("Sent: %s", msg.c_str());
+    }
+  }
+}
+
+void TCP_Send(uint8_t *data, size_t len)
+{
+  if (_tcpClient) {
+    if ( ! _tcpClient->write((const char *)data, len)) {
+      log_e("TCP Write failed!");
+    } else {
+      log_d("Sent: %s", msg.c_str());
     }
   }
 }

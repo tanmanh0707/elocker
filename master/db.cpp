@@ -1,6 +1,7 @@
 #include "common.h"
 
 #define PREF_NAME_SETTINGS                          "settings"
+#define PREF_KEY_DEVICE_ID                          "device-id"
 #define PREF_KEY_WIFI_SSID                          "wifi-ssid"
 #define PREF_KEY_WIFI_PASSWORD                      "wifi-password"
 #define PREF_KEY_ESPNOW_CHANNEL                     "espnow-channel"
@@ -9,6 +10,15 @@
 #define PREF_READWRITE                              false
 
 static Preferences _pref;
+
+int DB_GetDeviceId(int default_value)
+{
+  int dev_id = 0;
+  _pref.begin(PREF_NAME_SETTINGS, false);
+  dev_id = _pref.getInt(PREF_KEY_DEVICE_ID, default_value);
+  _pref.end();
+  return dev_id;
+}
 
 uint8_t DB_GetEspNowChannel()
 {

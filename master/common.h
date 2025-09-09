@@ -13,11 +13,12 @@
 
 #define DEVICE_TYPE_MASTER
 // #define DEVICE_TYPE_SLAVE
-#define DEVICE_ID                         0x01
 
 #if defined(DEVICE_TYPE_MASTER) && defined(DEVICE_TYPE_SLAVE)
 #error message("Only MASTER or SLAVE can be selected")
 #endif
+
+#define CONFIG_MASTER_DEVICE_ID               0x01
 
 #define CONFIG_BUILTIN_LED_PIN                8
 #define CONFIG_ESPNOW_DEFAULT_CHANNEL         1
@@ -62,7 +63,12 @@ bool WIRELESS_Broadcast(const uint8_t *data, size_t len);
 bool WIRELESS_Broadcast(String msg);
 bool WIRELESS_IsDiscovered();
 void WIRELESS_ChannelDiscoverLoop(byte channel_start = CONFIG_ESPNOW_DEFAULT_CHANNEL);
+
+void TCP_Send(uint8_t *data, size_t len);
+
+/* Sensor */
 void SENSOR_Setup();
+bool SENSOR_IsFound();
 
 /* LED */
 void LED_Init();
@@ -72,6 +78,7 @@ void DEVICES_Init();
 void DEVICES_UpdateInfo(DeviceId_t id, float mA, float V);
 void DEVICES_UpdateInfo(const uint8_t *data, int len);
 
+int DB_GetDeviceId(int default_value = 2);
 void DB_GetWifiCredentials(String &ssid, String &password);
 void DB_SetWifiCredentials(String &ssid, String &password);
 uint8_t DB_GetEspNowChannel();

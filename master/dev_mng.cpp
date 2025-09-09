@@ -66,13 +66,6 @@ void dev_mng_task(void *param)
       continue;
     }
 
-    //TODO:
-
-#if 1
-
-#else
-#if (CORE_DEBUG_LEVEL == 0)
-    //Using Serial to transmit data to PC
     size_t packet_len = devices_.size() * sizeof(DeviceInfo_st) + 1 /* Number of device */;
 
     uint8_t *packet = (uint8_t *)malloc(packet_len);
@@ -85,12 +78,11 @@ void dev_mng_task(void *param)
         memcpy(ptr, &devices_[i].V, sizeof(float)); ptr += sizeof(float);
       }
 
-      UART_SendBytes(packet, packet_len);
+      // UART_SendBytes(packet, packet_len);
+      TCP_Send(packet, packet_len);
       free(packet);
     } else {
       //
     }
-#endif  //UART - LOG_DEBUG = 0
-#endif  //Wireless
   }
 }

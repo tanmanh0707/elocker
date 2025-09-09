@@ -57,10 +57,29 @@ static void LocalLedBlink(uint32_t time, bool init)
   }
 }
 
+void LED_Splash()
+{
+#if defined(DEVICE_TYPE_MASTER)
+  LocalLedOn();
+  delay(2000);
+#endif
+
+#if defined(DEVICE_TYPE_SLAVE)
+  for (int i = 0; i < 2; i++) {
+    LocalLedOn();
+    delay(500);
+    LocalLedOff();
+    delay(500);
+  }
+#endif
+  LocalLedOff();
+}
+
 void LED_Init()
 {
   pinMode(CONFIG_BUILTIN_LED_PIN, OUTPUT);
-  LocalLedOn();
+
+  LED_Splash();
 
   if (_ledCtrlQ == nullptr) {
     _ledCtrlQ = xQueueCreate(LED_CTRL_QUEUE_SIZE, sizeof(LedCtrlMsg_st));
@@ -74,8 +93,6 @@ void LED_Init()
       }
     }
   }
-
-  LED_SendCmd(LED_CMD_STARTUP);
 }
 
 void LED_SendCmd(LedCtrlCmd_e cmd)
@@ -115,27 +132,49 @@ void LocalCheckLedCmdQueue()
 }
 
 int wirelessNotDiscovered[2] = {50, 1000};
+int wifiNotConnected[2] = {1000, 1000};
+int sensorNotFound[2] = {500, 500};
 int current_step = 0;
+unsigned long delay_time = 0;
+
+void LocalBlinkScenarios(int blink_case[], size_t size)
+{
+  if (current_step < size - 1) {
+    current_step++;
+  } else {
+    current_step = 0;
+  }
+
+  delay_time = blink_case[current_step];
+  if (current_step % 2 == 0) {
+    LocalLedOn();
+  } else {
+    LocalLedOff();
+  }
+}
 
 void led_ctrl_task(void *arg)
 {
-  unsigned long delay_time = 0;
   while (1)
   {
-    if (WIRELESS_IsDiscovered() == false) {
-      if (current_step < sizeof(wirelessNotDiscovered) / sizeof(wirelessNotDiscovered[0]) - 1) {
-        current_step++;
-      } else {
-        current_step = 0;
-      }
+#if defined(DEVICE_TYPE_MASTER)
+    if (WiFi.getMode() == WIFI_AP) {
+      LocalLedOn();
+      break;
+    }
+    else if (WiFi.status() != WL_CONNECTED) {
+      LocalBlinkScenarios(wifiNotConnected, sizeof(wifiNotConnected) / sizeof(wifiNotConnected[0]));
+    }
+#endif
 
-      delay_time = wirelessNotDiscovered[current_step];
-      if (current_step % 2 == 0) {
-        LocalLedOn();
-      } else {
-        LocalLedOff();
-      }
-    } else {
+#if defined(DEVICE_TYPE_SLAVE)
+    if (WIRELESS_IsDiscovered() == false) {
+      LocalBlinkScenarios(wirelessNotDiscovered, sizeof(wirelessNotDiscovered) / sizeof(wirelessNotDiscovered[0]));
+    } else if (SENSOR_IsFound() == false) {
+      LocalBlinkScenarios(sensorNotFound, sizeof(sensorNotFound) / sizeof(sensorNotFound[0]));
+    }
+#endif
+    else {
       current_step = 0;
       delay_time = 1000;
       LocalLedOff();
@@ -143,6 +182,8 @@ void led_ctrl_task(void *arg)
 
     delay(delay_time);
   }
+
+  vTaskDelete(NULL);
 }
 
 void led_ctrl_task_ex(void *arg)

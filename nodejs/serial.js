@@ -1,6 +1,8 @@
 const { SerialPort } = require("serialport");
 const http = require("http");
 const readline = require("readline");
+const dgram = require('dgram');
+const net = require('net');
 
 const SENSOR_STATUS_NOT_CHARGE = 0;
 const SENSOR_STATUS_CHARGING = 1;
@@ -9,10 +11,27 @@ const SENSOR_FULL_CHARGED_DELAY = 5;
 
 const CU_DEVICE_ID = 0;
 
+const UDP_PORT = 7792;
+const UDP_BROADCAST_ADDR = '255.255.255.255';
+const UDP_BROADCAST_PAYLOAD = 'Where are you, eLocker?';
+const UDP_BROADCAST_INTERVAL_MS = 1000;
+
+const TCP_RECONNECT_BASE_MS = 1000;
+const TCP_RECONNECT_MAX_MS = 15000;
+
+let udpSocket = null;
+let udpBroadcastTimer = null;
+let discoveredPeer = { ip: null, port: null };
+
+let tcpSocket = null;
+let tcpReconnectTimer = null;
+let tcpReconnectDelay = TCP_RECONNECT_BASE_MS;
+
+let sensorDevices = [];
+
 var MESS_CU_TEMP = [0x02, 0x00, 0x30, 0x03, 0x35];
 var sensorThreshold = 200;  //mA
 var cuPort;
-var ssPort;
 
 function  delay(time){
   return new Promise((resolve) => setTimeout(resolve, time))
@@ -227,9 +246,113 @@ async function handleSensorDevice(devices) {
   }
 }
 
-async function main() {
-  var sensorDevices = []
+// ===== UDP DISCOVERY =====
+function startUdp() {
+  udpSocket = dgram.createSocket('udp4');
+  udpSocket.on('message', (msg, rinfo) => {
+    if (msg.toString().trim() === 'Here I am, eLocker') {
+      if (!discoveredPeer.ip) {
+        discoveredPeer = { ip: rinfo.address, port: rinfo.port };
+        console.log(`[UDP] Found peer ${discoveredPeer.ip}:${discoveredPeer.port}`);
+        stopUdpBroadcast();
+        connectTcp();
+      }
+    }
+  });
+  udpSocket.bind(UDP_PORT, () => {
+    udpSocket.setBroadcast(true);
+    console.log('[UDP] Broadcasting...');
+    udpBroadcastTimer = setInterval(() => {
+      udpSocket.send(UDP_BROADCAST_PAYLOAD, UDP_PORT, UDP_BROADCAST_ADDR);
+    }, UDP_BROADCAST_INTERVAL_MS);
+  });
+}
+function stopUdpBroadcast() {
+  if (udpBroadcastTimer) {
+    clearInterval(udpBroadcastTimer);
+    udpBroadcastTimer = null;
+  }
+}
+// ==========================
 
+// ===== TCP CLIENT =====
+function sendTcp(obj) {
+  try {
+    if (tcpSocket && !tcpSocket.destroyed) {
+      const payload = JSON.stringify(obj);
+      tcpSocket.write(payload + "\n");
+      console.log("Sent TCP:", payload);
+    } else {
+      console.warn("TCP socket is not connected");
+    }
+  } catch (err) {
+    console.error("Failed to send TCP:", err.message);
+  }
+}
+
+function connectTcp() {
+  if (!discoveredPeer.ip) return;
+  if (tcpSocket) { tcpSocket.destroy(); tcpSocket = null; }
+  tcpSocket = new net.Socket();
+
+  tcpSocket.on('connect', () => {
+    console.log('[TCP] Connected');
+    tcpReconnectDelay = TCP_RECONNECT_BASE_MS;
+  });
+
+  tcpSocket.on('data', (chunk) => {
+    try {
+      let tmpDevices = parseSensorDevices(chunk);
+
+      tmpDevices.forEach(dev => {
+        let found = sensorDevices.find(o => o.id === dev.id);
+        if (found) {
+          if (dev.mA < sensorThreshold && dev.mA > 10) {
+            found.full_cnt++;
+          } else {
+            found.full_cnt = 0;
+          }
+          found.mA = dev.mA;
+          found.V = dev.V;
+        } else {
+          sensorDevices.push({
+            ...dev,
+            lock: false,
+            full_cnt: 0
+          });
+        }
+      });
+
+      handleSensorDevice(sensorDevices);
+    } catch { /* wait more */ }
+  });
+
+  tcpSocket.on('close', () => {
+    console.log('[TCP] Closed, reconnecting...');
+    scheduleReconnect();
+  });
+
+
+  tcpSocket.on("error", (err) => {
+    console.log("TCP error:", err.message);
+    tcpSocket.destroy();
+    scheduleReconnect();
+  });
+
+  tcpSocket.setKeepAlive(true, 3000);
+  tcpSocket.connect(discoveredPeer.port, discoveredPeer.ip);
+}
+function scheduleReconnect() {
+  if (tcpReconnectTimer) return;
+  tcpReconnectTimer = setTimeout(() => {
+    tcpReconnectTimer = null;
+    tcpReconnectDelay = Math.min(tcpReconnectDelay * 2, TCP_RECONNECT_MAX_MS);
+    connectTcp();
+  }, tcpReconnectDelay);
+}
+// ========================
+
+async function main() {
   const ports = await SerialPort.list();
   if (ports.length === 0) {
     console.log("⚠️ No COM Port found");
@@ -250,73 +373,9 @@ async function main() {
     }
   } while (cuPortIdx < 0 || cuPortIdx >= ports.length);
 
-  let ssPortIdx = 0;
-  do {
-    const ans = await questionAsync("Select Sensor COM port: ");
-    ssPortIdx = Number(ans.trim()) - 1;
-    if (ssPortIdx < 0 || ssPortIdx >= ports.length) {
-      console.log("❌ Invalid selection");
-    } else if (ssPortIdx == cuPortIdx) {
-      console.log(ports[cuPortIdx].path, "has been selected by CU Lock");
-    }
-  } while (ssPortIdx < 0 || ssPortIdx >= ports.length || ssPortIdx == cuPortIdx);
-
-  let recvBuffer = Buffer.alloc(0);
-  let sensorResolver = null;
-  let sensorTimeoutHdl = null;
-
   const cuPath = ports[cuPortIdx].path;
-  const ssPath = ports[ssPortIdx].path;
   const cuBaud = 19200;
-  const ssBaud = 115200;
   cuPort = new SerialPort({ path: cuPath, baudRate: cuBaud, autoOpen: false });
-  ssPort = new SerialPort({ path: ssPath, baudRate: ssBaud, autoOpen: false });
-
-  ssPort.on("data", (chunk) => {
-    dumpArrayHex("[RX] [SENSOR]", chunk)
-
-    recvBuffer = Buffer.concat([recvBuffer, chunk]);
-    while (recvBuffer.length >= 7) {
-      const stx = recvBuffer.indexOf(0x02);
-      if (stx === -1) break;
-      if (recvBuffer.length < recvBuffer[1] + 3) {
-        console.log("Invalid length: recvBuffer[1]:", recvBuffer[1], "- recv len:", recvBuffer.length);
-        break;
-      }
-
-      const packet = recvBuffer.subarray(stx, recvBuffer[1] + 3);
-      if (validateSensorPacket(packet)) {
-        let tmpDevices = parseSensorDevices(packet.subarray(2));
-
-        tmpDevices.forEach(dev => {
-          let found = sensorDevices.find(o => o.id === dev.id);
-          if (found) {
-            if (dev.mA < sensorThreshold && dev.mA > 10) {
-              found.full_cnt++;
-            } else {
-              found.full_cnt = 0;
-            }
-            found.mA = dev.mA;
-            found.V = dev.V;
-          } else {
-            sensorDevices.push({
-              ...dev,
-              lock: false,
-              full_cnt: 0
-            });
-          }
-        });
-
-        handleSensorDevice(sensorDevices);
-        recvBuffer = recvBuffer.subarray(recvBuffer[1] + 3);
-      } else {
-        dumpArrayHex("❌ [SENSOR] Validate failed", packet);
-      }
-    }
-  });
-
-  ssPort.on("open", () => console.log(`✅ [SENSOR] Opened ${ssPath} @${ssBaud}`));
-  ssPort.on("error", (err) => console.error("⚠️ [SENSOR] Error:", err.message));
 
   /* Init CU Lock COM port */
   cuPort.on("data", (data) => {
@@ -341,7 +400,6 @@ async function main() {
   cuPort.on("open", () => console.log(`✅ [CU] Opened ${cuPath} @${cuBaud}`));
   cuPort.on("error", (err) => console.error("⚠️ [CU] Error:", err.message));
 
-  await new Promise((res, rej) => ssPort.open((err) => (err ? rej(err) : res())));
   await new Promise((res, rej) => cuPort.open((err) => (err ? rej(err) : res())));
 
   const server = http.createServer(async (req, res) => {
@@ -394,6 +452,8 @@ async function main() {
   server.listen(PORT_HTTP, () => {
     console.log(`🌐 HTTP server listening on http://localhost:${PORT_HTTP}`);
   });
+
+  startUdp();
 }
 
 main();

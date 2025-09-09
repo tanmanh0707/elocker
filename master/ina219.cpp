@@ -39,6 +39,10 @@ void SENSOR_Setup()
   log_i("Measuring voltage and current with INA219 ...");
 }
 
+bool SENSOR_IsFound() {
+  return _deviceFound;
+}
+
 void sensor_task(void *arg)
 {
   while (1)
@@ -61,7 +65,7 @@ void sensor_task(void *arg)
     }
 
 #if defined(DEVICE_TYPE_SLAVE)
-    String msg = ("{\"id\":" + String(DEVICE_ID) +
+    String msg = ("{\"id\":" + String(DB_GetDeviceId()) +
                   ",\"mA\":" + String(_current_mA, 2) +
                   ",\"V\":" + String(_busvoltage) +
                   "}");
@@ -69,7 +73,7 @@ void sensor_task(void *arg)
 #endif
 
 #if defined(DEVICE_TYPE_MASTER)
-    DEVICES_UpdateInfo(DEVICE_ID, _current_mA, _busvoltage);
+    DEVICES_UpdateInfo(CONFIG_MASTER_DEVICE_ID, _current_mA, _busvoltage);
 #endif
 
     vTaskDelay(pdMS_TO_TICKS(2000));
