@@ -496,11 +496,7 @@ async function main() {
                   res.end(JSON.stringify({ message: 'Success' }, null, 2));
                 } else {
                   res.writeHead(400, { "Content-Type": "application/json" });
-                  if (status == SENSOR_STATUS_CHARGING) {
-                    res.end(JSON.stringify({ message: 'Device is charging!' }, null, 2));
-                  } else {
-                    res.end(JSON.stringify({ message: 'Device is not charged!' }, null, 2));
-                  }
+                  res.end(JSON.stringify({ message: 'Device is charging!' }, null, 2));
                 }
               } else {
                 res.writeHead(400, { "Content-Type": "application/json" });
