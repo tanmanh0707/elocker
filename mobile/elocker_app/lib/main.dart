@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-
+import 'dart:async';
 void main() {
   runApp(const MyApp());
 }
@@ -41,11 +41,16 @@ class _MainScreenState extends State<MainScreen> {
   String port = "";
   int threshold = 0;
   bool isLoading = false;
+  Timer? _timer;
 
   @override
   void initState() {
     super.initState();
     _loadSettings();
+
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      _refreshStatus();
+    });
   }
 
   Future<void> _loadSettings() async {
@@ -59,7 +64,6 @@ class _MainScreenState extends State<MainScreen> {
 
   Future<void> _refreshStatus() async {
     if (ip.isEmpty || port.isEmpty) return;
-    setState(() => isLoading = true);
 
     try {
       final url = Uri.parse("http://$ip:$port/getStatus");
@@ -76,9 +80,9 @@ class _MainScreenState extends State<MainScreen> {
         _showDialog("Failed to get status");
       }
     } catch (e) {
-      _showDialog("Error: $e");
+      // _showDialog("Error: $e");
     } finally {
-      setState(() => isLoading = false);
+      
     }
   }
 
@@ -94,7 +98,7 @@ class _MainScreenState extends State<MainScreen> {
         body: jsonEncode({"threshold": threshold}),
       );
       if (res.statusCode == 200) {
-        _showDialog("Success");
+        _showDialog(res.body);
       } else {
         _showDialog("Fail");
       }
@@ -143,6 +147,36 @@ class _MainScreenState extends State<MainScreen> {
     } else {
       return const Icon(Icons.lock_open, color: Colors.red,);
     }
+  }
+
+  Future<void> _unlockDevice (dynamic dev) async {
+    if (ip.isEmpty || port.isEmpty) return;
+    if ( ! dev["lock"]) return;
+    setState(() => isLoading = true);
+
+    try {
+      final url = Uri.parse("http://$ip:$port/unlock");
+      final res = await http.post(
+        url,
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({"id": dev["id"]}),
+      );
+      if (res.statusCode == 200) {
+        _showDialog(res.body);
+      } else {
+        _showDialog("Error: ${res.body}");
+      }
+    } catch (e) {
+      _showDialog("Error: $e");
+    } finally {
+      setState(() => isLoading = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
   }
 
   @override
@@ -202,7 +236,7 @@ class _MainScreenState extends State<MainScreen> {
                     final d = deviceList[index];
                     return ListTile(
                       leading: SizedBox(
-                        width: 80.sp,
+                        width: 100.sp,
                         child: Row(
                           children: [
                           Icon(
@@ -210,10 +244,13 @@ class _MainScreenState extends State<MainScreen> {
                             color: _getBatteryIcon(d["status"]).color,
                             size: 28.sp, // ✅ icon tự scale
                           ),
-                          Icon(
-                            _getLockIcon(d["lock"]).icon,
-                            color: _getLockIcon(d["lock"]).color,
-                            size: 28.sp, // ✅ icon tự scale
+                          ElevatedButton.icon(
+                            onPressed: () =>_unlockDevice(d),
+                            icon: Icon(
+                                    _getLockIcon(d["lock"]).icon,
+                                    color: _getLockIcon(d["lock"]).color,
+                                    size: 28.sp),
+                            label: Text(""),
                           )],
                         ),
                       ),

@@ -3,6 +3,7 @@ const http = require("http");
 const readline = require("readline");
 const dgram = require('dgram');
 const net = require('net');
+const fs = require("fs");
 
 const SENSOR_STATUS_NOT_CHARGE = 0;
 const SENSOR_STATUS_CHARGING = 1;
@@ -32,6 +33,19 @@ let sensorDevices = [];
 var MESS_CU_TEMP = [0x02, 0x00, 0x30, 0x03, 0x35];
 var sensorThreshold = 200;  //mA
 var cuPort;
+
+const persistPath = "./store.json";
+
+function loadStore() {
+  if (fs.existsSync(persistPath)) {
+    return JSON.parse(fs.readFileSync(persistPath, "utf8"));
+  }
+  return {};
+}
+
+function saveStore(data) {
+  fs.writeFileSync(persistPath, JSON.stringify(data, null, 2), "utf8");
+}
 
 function  delay(time){
   return new Promise((resolve) => setTimeout(resolve, time))
@@ -238,9 +252,9 @@ async function handleSensorDevice(devices) {
     let status = getSensorStatus(dev.mA);
     if (status == SENSOR_STATUS_FULL_CHARGED && dev.full_cnt >= SENSOR_FULL_CHARGED_DELAY) {
       if (dev.lock === true) {
-        cuLockOpen(CU_DEVICE_ID, dev.id);
-        await delay(250);
-        cuLockStatus(CU_DEVICE_ID);
+        // cuLockOpen(CU_DEVICE_ID, dev.id);
+        // await delay(250);
+        // cuLockStatus(CU_DEVICE_ID);
       }
     }
   }
@@ -353,6 +367,13 @@ function scheduleReconnect() {
 // ========================
 
 async function main() {
+  let store = loadStore();
+  console.log("Persistance:", store);
+
+  sensorThreshold = (store.threshold || 300);
+  store.threshold = sensorThreshold;
+  saveStore(store);
+
   const ports = await SerialPort.list();
   if (ports.length === 0) {
     console.log("⚠️ No COM Port found");
@@ -378,22 +399,31 @@ async function main() {
   cuPort = new SerialPort({ path: cuPath, baudRate: cuBaud, autoOpen: false });
 
   /* Init CU Lock COM port */
-  cuPort.on("data", (data) => {
-    if (data.length > 0 && data[0] === 0x02 && data[1] === CU_DEVICE_ID && data[2] === 0x35) {
-      let status = (data[4] << 8) | (data[3])
+  let rxBuffer = Buffer.alloc(0);
 
-      for (let dev_id = 0; dev_id < 16; dev_id++) {
-        let lock_stt = ((status >> dev_id) & 1) === 1? true : false;
-        let found = sensorDevices.find(o => o.id === dev_id + 1);
-        if (found) {
-          if (found.lock !== lock_stt) {
-            console.log("[CU][" + dev_id + "]", lock_stt? "true" : "false");
+  cuPort.on("data", (data) => {
+    rxBuffer = Buffer.concat([rxBuffer, data]);
+
+    while (rxBuffer.length >= 9) {
+      const frame = rxBuffer.slice(0, 9);
+
+      if (frame[0] === 0x02 && frame[1] === CU_DEVICE_ID && frame[2] === 0x35) {
+        let status = (frame[4] << 8) | frame[3];
+
+        for (let dev_id = 0; dev_id < 16; dev_id++) {
+          let lock_stt = ((status >> dev_id) & 1) === 1;
+          let found = sensorDevices.find(o => o.id === dev_id + 1);
+          if (found && found.lock !== lock_stt) {
+            console.log(`[CU][${dev_id}]`, lock_stt ? "true" : "false");
             found.lock = lock_stt;
           }
         }
+
+        rxBuffer = rxBuffer.slice(9);
+      } else {
+        dumpArrayHex("❌ [CU][RX]:", rxBuffer);
+        rxBuffer = rxBuffer.slice(1);
       }
-    } else {
-      dumpArrayHex("❌ [CU][RX]:", data);
     }
   });
 
@@ -411,7 +441,7 @@ async function main() {
         results.push({ id: dev.id, mA: dev.mA, V: dev.V, status: statusStr, lock: dev.lock });
       }
 
-	    console.log(results);
+	    // console.log(results);
       const json = JSON.stringify({ results }, null, 2);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(json);
@@ -428,11 +458,60 @@ async function main() {
             res.end("Invalid threshold");
           } else {
             sensorThreshold = threshold;
+            store.threshold = sensorThreshold;
+            saveStore(store);
             console.log("✅ Threshold set to", sensorThreshold, "(mA)")
             res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ message: 'success' }, null, 2));
+            res.end(JSON.stringify({ message: 'Threshold set to ' + sensorThreshold }, null, 2));
           }
 		    } catch (e) {
+          res.writeHead(400);
+          res.end("Invalid JSON");
+        }
+      });
+    }
+    else if (req.method === "POST" && req.url === "/unlock") {
+      let body = "";
+      req.on("data", (chunk) => (body += chunk));
+      req.on("end", async () => {
+        try {
+          const data = JSON.parse(body);
+          const locker_id = data.id;
+          console.log("Request /unlock", data);
+          if (typeof locker_id !== "number") {
+            res.writeHead(400);
+            res.end("Invalid Device ID");
+          } else {
+            let found = sensorDevices.find(o => o.id === locker_id);
+            if (found) {
+              console.log("Found", found);
+              if (found.lock) {
+                let status = getSensorStatus(found.mA);
+                if ((status === SENSOR_STATUS_FULL_CHARGED && found.full_cnt >= SENSOR_FULL_CHARGED_DELAY)
+                      || status == SENSOR_STATUS_NOT_CHARGE) {
+                  cuLockOpen(CU_DEVICE_ID, found.id);
+                  await delay(250);
+                  cuLockStatus(CU_DEVICE_ID);
+                  res.writeHead(200, { "Content-Type": "application/json" });
+                  res.end(JSON.stringify({ message: 'Success' }, null, 2));
+                } else {
+                  res.writeHead(400, { "Content-Type": "application/json" });
+                  if (status == SENSOR_STATUS_CHARGING) {
+                    res.end(JSON.stringify({ message: 'Device is charging!' }, null, 2));
+                  } else {
+                    res.end(JSON.stringify({ message: 'Device is not charged!' }, null, 2));
+                  }
+                }
+              } else {
+                res.writeHead(400, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ message: 'Already unlocked!' }, null, 2));
+              }
+            } else {
+              res.writeHead(400, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ message: 'Device not found' }, null, 2));
+            }
+          }
+        } catch (e) {
           res.writeHead(400);
           res.end("Invalid JSON");
         }
