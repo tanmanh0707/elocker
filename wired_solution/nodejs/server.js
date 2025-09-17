@@ -341,25 +341,25 @@ function getSensorStatusString(status) {
 }
 
 function cuLockOpen(cu_id, lock_id) {
-  // let cuMsg = buildCuLockOpenMessage(cu_id, lock_id);
+  let cuMsg = buildCuLockOpenMessage(cu_id, lock_id);
 
-  // cuPort.write(cuMsg, (err) => {
-  //   if (err) {
-  //     console.error("Send failed:", err.message);
-  //   } else {
-  //     dumpArrayHex('[CU][TX]', cuMsg);
-  //   }
-  // });
+  cuPort.write(cuMsg, (err) => {
+    if (err) {
+      console.error("Send failed:", err.message);
+    } else {
+      dumpArrayHex('[CU][TX]', cuMsg);
+    }
+  });
 }
 
 function cuLockStatus(cu_id) {
-  // let cuMsg = buildCuLockGetStatusMessage(cu_id);
+  let cuMsg = buildCuLockGetStatusMessage(cu_id);
 
-  // cuPort.write(cuMsg, (err) => {
-  //   if (err) {
-  //     console.error("Send failed:", err.message);
-  //   }
-  // });
+  cuPort.write(cuMsg, (err) => {
+    if (err) {
+      console.error("Send failed:", err.message);
+    }
+  });
 }
 
 async function handleSensorDevice(devices) {
