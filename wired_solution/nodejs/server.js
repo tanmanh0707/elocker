@@ -42,6 +42,7 @@ const WIRED_DEVICE_ID = [ 5, 6, 7, 8 ];
 
 var MESS_CU_TEMP = [0x02, 0x00, 0x30, 0x03, 0x35];
 var sensorThreshold = 200;  //mA
+var notchargeThreshold = 100; //mA
 var cuPort;
 var ssPort;
 
@@ -123,7 +124,7 @@ function connectTcp() {
       tmpDevices.forEach(dev => {
         let found = sensorDevices.find(o => o.id === dev.id);
         if (found) {
-          if (dev.mA < sensorThreshold && dev.mA > 10) {
+          if (notchargeThreshold < dev.mA && dev.mA < sensorThreshold) {
             found.full_cnt++;
           } else {
             found.full_cnt = 0;
@@ -321,7 +322,7 @@ function parseSensorDevices(byteArray) {
 }
 
 function getSensorStatus(current_mA) {
-  if (current_mA < 10) {
+  if (current_mA <= notchargeThreshold) {
     return SENSOR_STATUS_NOT_CHARGE;
   } else if (current_mA < sensorThreshold) {
     return SENSOR_STATUS_FULL_CHARGED;
@@ -448,8 +449,10 @@ async function main() {
   let store = loadStore();
   console.log("Persistance:", store);
 
-  sensorThreshold = (store.threshold || 300);
-  store.threshold = sensorThreshold;
+  sensorThreshold = (store.fullcharged || 300);
+  notchargeThreshold = (store.notcharged || 100);
+  store.fullcharged = sensorThreshold;
+  store.notcharged = notchargeThreshold;
   saveStore(store);
 
   const ports = await SerialPort.list();
@@ -492,9 +495,15 @@ async function main() {
         for (let dev_id = 0; dev_id < 16; dev_id++) {
           let lock_stt = ((status >> dev_id) & 1) === 1;
           let found = sensorDevices.find(o => o.id === dev_id + 1);
-          if (found && found.lock !== lock_stt) {
-            console.log(`[CU][${dev_id}]`, lock_stt ? "true" : "false");
-            found.lock = lock_stt;
+          if (found) {
+            if (found.lock !== lock_stt) {
+              console.log(`[CU][${dev_id}]`, lock_stt ? "true" : "false");
+              found.lock = lock_stt;
+            }
+
+            if (lock_stt && found.mA <= notchargeThreshold) {
+              cuLockOpen(CU_DEVICE_ID, dev_id + 1);
+            }
           }
         }
 
@@ -578,7 +587,7 @@ async function main() {
           let found = sensorDevices.find(o => o.id === id);
           let lock = false;
           if (found) {
-            if (mA < sensorThreshold && mA > 10) {
+            if (notchargeThreshold < mA && mA < sensorThreshold) {
               found.full_cnt++;
             } else {
               found.full_cnt = 0;
@@ -618,17 +627,21 @@ async function main() {
       req.on("end", async () => {
         try {
           const data = JSON.parse(body);
-          const threshold = data.threshold;
-          if (typeof threshold !== "number") {
+          const fullcharged = data.fullcharged;
+          const notcharged = data.notcharged;
+          if (typeof fullcharged !== "number" || typeof notcharged !== "number") {
             res.writeHead(400);
             res.end("Invalid threshold");
           } else {
-            sensorThreshold = threshold;
-            store.threshold = sensorThreshold;
+            sensorThreshold = fullcharged;
+            store.fullcharged = sensorThreshold;
+            notchargeThreshold = notcharged;
+            store.notcharged = notchargeThreshold;
             saveStore(store);
-            console.log("✅ Threshold set to", sensorThreshold, "(mA)")
+            let msg = "✅ Full Charged: " + sensorThreshold + "(mA), Not Charged:" + notchargeThreshold + "(mA)";
+            console.log(msg);
             res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ message: 'Threshold set to ' + sensorThreshold }, null, 2));
+            res.end(JSON.stringify({ message: msg }, null, 2));
           }
 		    } catch (e) {
           res.writeHead(400);
