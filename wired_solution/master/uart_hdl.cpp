@@ -189,10 +189,16 @@ void LocalHandleIncommingData(uint8_t *data, uint16_t data_len)
           log_i("Get Current mA");
           float current_mA = SENSOR_GetCurrent_mA();
           float busVoltage = SENSOR_GetVoltage();
-          uint8_t buffer[sizeof(float) * 2] = { 0 };
-          memcpy(buffer, (uint8_t *)&current_mA, sizeof(float));
-          memcpy(&buffer[sizeof(float)], (uint8_t *)&busVoltage, sizeof(float));
-          UART1_SendBytes(buffer, sizeof(float) * 2);
+          bool smoke_detected = SENSOR_SMOKE_Detected();
+          bool fire_detected = SENSOR_FIRE_Detected();
+          int buffer_size = sizeof(float) * 2 + 2;  //mA(float) + vol(float) + smoke(bool) + fire(bool)
+          uint8_t buffer[buffer_size] = { 0 };
+          uint8_t pos = 0;
+          memcpy(buffer, (uint8_t *)&current_mA, sizeof(float)); pos += sizeof(float);
+          memcpy(&buffer[pos], (uint8_t *)&busVoltage, sizeof(float)); pos += sizeof(float);
+          buffer[pos] = smoke_detected? 1 : 0; pos++;
+          buffer[pos] = fire_detected? 1 : 0;
+          UART1_SendBytes(buffer, buffer_size);
         }
           break;
 

@@ -1,5 +1,7 @@
 #include "common.h"
 
+#define SMOKE_PIN                 4
+#define FIRE_PIN                  5
 #define INA219_SDA_PIN            6
 #define INA219_SCL_PIN            7
 
@@ -11,8 +13,31 @@ float _current_mA = 0;
 
 static void sensor_task(void *arg);
 
+void SENSOR_SMOKE_Setup()
+{
+  pinMode(SMOKE_PIN, INPUT_PULLUP);
+}
+
+void SENSOR_FIRE_Setup()
+{
+  pinMode(FIRE_PIN, INPUT_PULLUP);
+}
+
+bool SENSOR_SMOKE_Detected()
+{
+  return digitalRead(SMOKE_PIN) == HIGH;
+}
+
+bool SENSOR_FIRE_Detected()
+{
+  return digitalRead(FIRE_PIN) == HIGH;
+}
+
 void SENSOR_Setup()
 {
+  SENSOR_SMOKE_Setup();
+  SENSOR_FIRE_Setup();
+
   Wire.setPins(INA219_SDA_PIN, INA219_SCL_PIN);
 
   log_i("Searching for INA219...");

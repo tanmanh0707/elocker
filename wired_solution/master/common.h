@@ -77,6 +77,8 @@ void SENSOR_Setup();
 bool SENSOR_IsFound();
 float SENSOR_GetVoltage(void);
 float SENSOR_GetCurrent_mA(void);
+bool SENSOR_SMOKE_Detected();
+bool SENSOR_FIRE_Detected();
 
 /* LED */
 void LED_Init();
