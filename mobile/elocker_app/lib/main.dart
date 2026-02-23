@@ -41,7 +41,6 @@ class MainScreen extends StatefulWidget {
 }
 
 class _MainScreenState extends State<MainScreen> {
-  List<Map<String, dynamic>> devices = [];
   List<dynamic> deviceList = [];
   String ip = "";
   String port = "";
@@ -78,11 +77,8 @@ class _MainScreenState extends State<MainScreen> {
       final res = await http.post(url);
       if (res.statusCode == 200) {
         final List<dynamic> data = jsonDecode(res.body)["results"];
-        deviceList = jsonDecode(res.body)["results"];
         setState(() {
-          devices = data
-              .map((e) => {"id": e["id"], "status": e["status"]})
-              .toList();
+          deviceList = data;
         });
       } else {
         _showDialog("Failed to get status");
@@ -239,12 +235,12 @@ class _MainScreenState extends State<MainScreen> {
               SizedBox(height: 15.sp),
               Expanded(
                 child: ListView.builder(
-                  itemCount: devices.length,
+                  itemCount: deviceList.length,
                   itemBuilder: (context, index) {
                     final d = deviceList[index];
                     return ListTile(
                       leading: SizedBox(
-                        width: 100.sp,
+                        width: 160.sp,
                         child: Row(
                           children: [
                             Icon(
@@ -261,6 +257,10 @@ class _MainScreenState extends State<MainScreen> {
                               ),
                               label: Text(""),
                             ),
+                          if (d["smoke"] == true)
+                            Icon(Icons.cloud, color: Colors.orange, size: 28.sp),
+                          if (d["fire"] == true)
+                            Icon(Icons.local_fire_department, color: Colors.red, size: 28.sp),
                           ],
                         ),
                       ),

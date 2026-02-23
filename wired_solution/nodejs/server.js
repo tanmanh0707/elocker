@@ -582,6 +582,8 @@ async function main() {
 		      const mA = Math.round(Math.abs(mADataBytes.readFloatLE(0)));
           const vDataBytes = resp.slice(7, 11);
           const V = Math.round(Math.abs(vDataBytes.readFloatLE(0)));
+          const smoke = resp.length > 11 ? resp[11] !== 0 : false;
+          const fire  = resp.length > 12 ? resp[12] !== 0 : false;
           let statusStr = getSensorStatusString(getSensorStatus(mA));
 
           let found = sensorDevices.find(o => o.id === id);
@@ -594,6 +596,8 @@ async function main() {
             }
             found.mA = mA;
             found.V = V;
+            found.smoke = smoke;
+            found.fire  = fire;
 
             lock = found.lock;
           } else {
@@ -602,7 +606,9 @@ async function main() {
               mA: mA,
               V: V,
               lock: false,
-              full_cnt: 0
+              full_cnt: 0,
+              smoke: smoke,
+              fire: fire
             });
           }
 
@@ -614,7 +620,7 @@ async function main() {
 
       for (let dev of sensorDevices) {   
         let statusStr = getSensorStatusString(getSensorStatus(dev.mA));
-        results.push({ id: dev.id, mA: dev.mA, V: dev.V, status: statusStr, lock: dev.lock });
+        results.push({ id: dev.id, mA: dev.mA, V: dev.V, status: statusStr, lock: dev.lock, smoke: dev.smoke || false, fire: dev.fire || false });
       }
 
       const json = JSON.stringify({ results }, null, 2);
