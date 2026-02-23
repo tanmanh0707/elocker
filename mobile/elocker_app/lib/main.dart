@@ -4,6 +4,12 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'dart:async';
+
+final String prefKeyIp = "ip";
+final String prefKeyPort = "port";
+final String prefKeyFullCharged = "fullcharged";
+final String prefKeyNotCharged = "notcharged";
+
 void main() {
   runApp(const MyApp());
 }
@@ -39,7 +45,8 @@ class _MainScreenState extends State<MainScreen> {
   List<dynamic> deviceList = [];
   String ip = "";
   String port = "";
-  int threshold = 0;
+  int fullchargedVal = 0;
+  int notchargedVal = 0;
   bool isLoading = false;
   Timer? _timer;
 
@@ -56,9 +63,10 @@ class _MainScreenState extends State<MainScreen> {
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
-      ip = prefs.getString("ip") ?? "127.0.0.1";
-      port = prefs.getString("port") ?? "8080";
-      threshold = prefs.getInt("threshold") ?? 50;
+      ip = prefs.getString(prefKeyIp) ?? "127.0.0.1";
+      port = prefs.getString(prefKeyPort) ?? "8080";
+      fullchargedVal = prefs.getInt(prefKeyFullCharged) ?? 300;
+      notchargedVal = prefs.getInt("notcharged") ?? 100;
     });
   }
 
@@ -81,9 +89,7 @@ class _MainScreenState extends State<MainScreen> {
       }
     } catch (e) {
       // _showDialog("Error: $e");
-    } finally {
-      
-    }
+    } finally {}
   }
 
   Future<void> _setThreshold() async {
@@ -95,7 +101,10 @@ class _MainScreenState extends State<MainScreen> {
       final res = await http.post(
         url,
         headers: {"Content-Type": "application/json"},
-        body: jsonEncode({"threshold": threshold}),
+        body: jsonEncode({
+          prefKeyFullCharged: fullchargedVal,
+          prefKeyNotCharged: notchargedVal,
+        }),
       );
       if (res.statusCode == 200) {
         _showDialog(res.body);
@@ -113,15 +122,12 @@ class _MainScreenState extends State<MainScreen> {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        title: Text("Result", 
-              style: TextStyle(fontSize: 16.sp)),
-        content: Text(msg, 
-              style: TextStyle(fontSize: 16.sp),),
+        title: Text("Result", style: TextStyle(fontSize: 16.sp)),
+        content: Text(msg, style: TextStyle(fontSize: 16.sp)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: Text("OK", 
-              style: TextStyle(fontSize: 16.sp)),
+            child: Text("OK", style: TextStyle(fontSize: 16.sp)),
           ),
         ],
       ),
@@ -143,15 +149,15 @@ class _MainScreenState extends State<MainScreen> {
 
   Icon _getLockIcon(bool lock) {
     if (lock) {
-      return const Icon(Icons.lock, color: Colors.green,);
+      return const Icon(Icons.lock, color: Colors.green);
     } else {
-      return const Icon(Icons.lock_open, color: Colors.red,);
+      return const Icon(Icons.lock_open, color: Colors.red);
     }
   }
 
-  Future<void> _unlockDevice (dynamic dev) async {
+  Future<void> _unlockDevice(dynamic dev) async {
     if (ip.isEmpty || port.isEmpty) return;
-    if ( ! dev["lock"]) return;
+    if (!dev["lock"]) return;
     setState(() => isLoading = true);
 
     try {
@@ -199,8 +205,10 @@ class _MainScreenState extends State<MainScreen> {
               }
             },
             itemBuilder: (context) => [
-              PopupMenuItem(value: "settings", child: Text("Settings", 
-              style: TextStyle(fontSize: 16.sp))),
+              PopupMenuItem(
+                value: "settings",
+                child: Text("Settings", style: TextStyle(fontSize: 16.sp)),
+              ),
             ],
           ),
         ],
@@ -239,19 +247,21 @@ class _MainScreenState extends State<MainScreen> {
                         width: 100.sp,
                         child: Row(
                           children: [
-                          Icon(
-                            _getBatteryIcon(d["status"]).icon,
-                            color: _getBatteryIcon(d["status"]).color,
-                            size: 28.sp, // ✅ icon tự scale
-                          ),
-                          ElevatedButton.icon(
-                            onPressed: () =>_unlockDevice(d),
-                            icon: Icon(
-                                    _getLockIcon(d["lock"]).icon,
-                                    color: _getLockIcon(d["lock"]).color,
-                                    size: 28.sp),
-                            label: Text(""),
-                          )],
+                            Icon(
+                              _getBatteryIcon(d["status"]).icon,
+                              color: _getBatteryIcon(d["status"]).color,
+                              size: 28.sp, // ✅ icon tự scale
+                            ),
+                            ElevatedButton.icon(
+                              onPressed: () => _unlockDevice(d),
+                              icon: Icon(
+                                _getLockIcon(d["lock"]).icon,
+                                color: _getLockIcon(d["lock"]).color,
+                                size: 28.sp,
+                              ),
+                              label: Text(""),
+                            ),
+                          ],
                         ),
                       ),
                       title: Text(
@@ -291,7 +301,8 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   final TextEditingController ipCtrl = TextEditingController();
   final TextEditingController portCtrl = TextEditingController();
-  final TextEditingController thresholdCtrl = TextEditingController();
+  final TextEditingController fullchargedCtrl = TextEditingController();
+  final TextEditingController notchargedCtrl = TextEditingController();
 
   @override
   void initState() {
@@ -301,20 +312,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
-    ipCtrl.text = prefs.getString("ip") ?? "";
-    portCtrl.text = prefs.getString("port") ?? "";
-    thresholdCtrl.text = (prefs.getInt("threshold") ?? 50).toString();
+    ipCtrl.text = prefs.getString(prefKeyIp) ?? "";
+    portCtrl.text = prefs.getString(prefKeyPort) ?? "";
+    fullchargedCtrl.text = (prefs.getInt(prefKeyFullCharged) ?? 50).toString();
+    notchargedCtrl.text = (prefs.getInt(prefKeyNotCharged) ?? 50).toString();
   }
 
   Future<void> _saveSettings() async {
     final prefs = await SharedPreferences.getInstance();
     final ip = ipCtrl.text.trim();
     final port = portCtrl.text.trim();
-    final threshold = int.tryParse(thresholdCtrl.text.trim()) ?? 50;
+    final fullcharged = int.tryParse(fullchargedCtrl.text.trim()) ?? 50;
+    final notcharged = int.tryParse(notchargedCtrl.text.trim()) ?? 50;
 
-    await prefs.setString("ip", ip);
-    await prefs.setString("port", port);
-    await prefs.setInt("threshold", threshold);
+    await prefs.setString(prefKeyIp, ip);
+    await prefs.setString(prefKeyPort, port);
+    await prefs.setInt(prefKeyFullCharged, fullcharged);
+    await prefs.setInt(prefKeyNotCharged, notcharged);
 
     if (!mounted) return;
     Navigator.pop(context, true); // trả về true để MainScreen reload
@@ -351,16 +365,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
             const SizedBox(height: 16),
             TextField(
               style: TextStyle(fontSize: 16.sp),
-              controller: thresholdCtrl,
+              controller: fullchargedCtrl,
               decoration: const InputDecoration(
-                labelText: "Threshold (mA)",
+                labelText: "Full Charged (mA)",
+                border: OutlineInputBorder(),
+              ),
+              keyboardType: TextInputType.number,
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              style: TextStyle(fontSize: 16.sp),
+              controller: notchargedCtrl,
+              decoration: const InputDecoration(
+                labelText: "Not Charged (mA)",
                 border: OutlineInputBorder(),
               ),
               keyboardType: TextInputType.number,
             ),
             const SizedBox(height: 20),
-            ElevatedButton(onPressed: _saveSettings, child: Text("Save", 
-              style: TextStyle(fontSize: 16.sp))),
+            ElevatedButton(
+              onPressed: _saveSettings,
+              child: Text("Save", style: TextStyle(fontSize: 16.sp)),
+            ),
           ],
         ),
       ),
