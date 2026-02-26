@@ -4,6 +4,78 @@ const readline = require("readline");
 const dgram = require('dgram');
 const net = require('net');
 const fs = require("fs");
+const nodemailer = require("nodemailer");
+
+// ===== ALERT EMAIL CONFIG =====
+const MAIL_CONFIG = {
+  host: 'smtp.gmail.com',
+  port: 587,
+  secure: false, // TLS (STARTTLS)
+  auth: {
+    user: 'drksystemnoreply@gmail.com',
+    pass: 'icbgczjybnutvdmk'
+  },
+  fromName: 'Drk System'
+};
+
+// Predefined receiver email list — add recipient addresses here
+const ALERT_RECEIVER_EMAILS = [
+  'tanmanh0707@gmail.com'
+];
+
+// Tracks which locker IDs have already triggered an alert (resets when condition clears)
+const smokeFireAlerted = new Set();
+
+function testSendEmail() {
+  return new Promise((resolve) => {
+    console.log("[TEST] Press 't' to send a test alert email, or any other key to skip...");
+    if (process.stdin.isTTY) process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.setEncoding('utf8');
+    process.stdin.once('data', (key) => {
+      if (key === '\u0003') process.exit(); // Ctrl+C
+      if (process.stdin.isTTY) process.stdin.setRawMode(false);
+      process.stdin.pause();
+      if (key.trim().toLowerCase() === 't') {
+        console.log('[TEST] Sending test alert email...');
+        sendAlertEmail('TEST-001', 'Smoke (Test)').then(resolve);
+      } else {
+        console.log('[TEST] Skipped.');
+        resolve();
+      }
+    });
+  });
+}
+
+async function sendAlertEmail(lockerId, type) {
+  if (ALERT_RECEIVER_EMAILS.length === 0) {
+    console.warn('[ALERT] No receiver emails configured, skipping email.');
+    return;
+  }
+  const transporter = nodemailer.createTransport({
+    host: MAIL_CONFIG.host,
+    port: MAIL_CONFIG.port,
+    secure: MAIL_CONFIG.secure,
+    auth: { user: MAIL_CONFIG.auth.user, pass: MAIL_CONFIG.auth.pass }
+  });
+  const subject = `[ALERT] ${type.toUpperCase()} detected at eLocker #${lockerId}`;
+  const text =
+    `WARNING: ${type} has been detected at eLocker ID: ${lockerId}.\n\n` +
+    `The locker has been automatically opened as a safety measure.\n\n` +
+    `Time: ${new Date().toISOString()}`;
+  try {
+    await transporter.sendMail({
+      from: `"${MAIL_CONFIG.fromName}" <${MAIL_CONFIG.auth.user}>`,
+      to: ALERT_RECEIVER_EMAILS.join(', '),
+      subject,
+      text
+    });
+    console.log(`[ALERT] Email sent for locker ${lockerId} (${type})`);
+  } catch (err) {
+    console.error(`[ALERT] Failed to send email:`, err.message);
+  }
+}
+// ==============================
 
 const SENSOR_STATUS_NOT_CHARGE = 0;
 const SENSOR_STATUS_CHARGING = 1;
@@ -461,6 +533,8 @@ async function main() {
     return;
   }
 
+  // await testSendEmail();
+
   console.log("COM port list:");
   ports.forEach((p, idx) => {
     console.log(`${idx + 1}) ${p.path} ${p.friendlyName || ""}`);
@@ -598,6 +672,19 @@ async function main() {
             found.V = V;
             found.smoke = smoke;
             found.fire  = fire;
+
+            // Smoke/fire emergency: open lock immediately and send alert email
+            if (smoke || fire) {
+              if (!smokeFireAlerted.has(id)) {
+                smokeFireAlerted.add(id);
+                const alertType = fire ? 'Fire' : 'Smoke';
+                console.log(`[ALERT] ${alertType} detected at locker ${id}! Opening lock...`);
+                cuLockOpen(CU_DEVICE_ID, id);
+                sendAlertEmail(id, alertType);
+              }
+            } else {
+              smokeFireAlerted.delete(id); // reset so future events trigger again
+            }
 
             lock = found.lock;
           } else {
