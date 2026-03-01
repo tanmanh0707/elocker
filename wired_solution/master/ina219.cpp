@@ -15,17 +15,18 @@ static void sensor_task(void *arg);
 
 void SENSOR_SMOKE_Setup()
 {
-  pinMode(SMOKE_PIN, INPUT_PULLUP);
+  pinMode(SMOKE_PIN, INPUT_PULLDOWN);
 }
 
 void SENSOR_FIRE_Setup()
 {
-  pinMode(FIRE_PIN, INPUT_PULLUP);
+  pinMode(FIRE_PIN, INPUT_PULLDOWN);
 }
 
 bool SENSOR_SMOKE_Detected()
 {
-  return digitalRead(SMOKE_PIN) == HIGH;
+  /* MQ-2 Sensor is active LOW */
+  return digitalRead(SMOKE_PIN) == LOW;
 }
 
 bool SENSOR_FIRE_Detected()
